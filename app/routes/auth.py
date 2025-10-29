@@ -2,10 +2,19 @@ from flask import Blueprint, render_template_string, request, redirect, url_for,
 import hashlib
 import time
 import requests
+import logging
 from datetime import datetime
-from app.models import get_users, save_users, get_verifications, save_verifications, get_wechat_sessions, save_wechat_sessions
+from app.models import get_users, save_users, get_verifications, save_verifications, get_wechat_sessions, save_wechat_sessions, LoginLog, db
 from app.utils import generate_verification_code, generate_wechat_state, send_email, verify_code, generate_captcha
 from app import WECHAT_CORP_ID, WECHAT_AGENT_ID, WECHAT_APP_SECRET, WECHAT_REDIRECT_URI
+
+# 配置日志记录器
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+logger = logging.getLogger('auth')
 
 # 创建蓝图
 bp = Blueprint('auth', __name__)
@@ -35,6 +44,7 @@ def login():
     """登录页面"""
     # 如果用户已登录，重定向到首页
     if 'username' in session:
+        logger.info(f"用户 {session['username']} 尝试再次登录，已重定向到首页")
         return redirect(url_for('auth.index'))
     
     error_message = None
@@ -42,11 +52,33 @@ def login():
     if request.method == 'POST':
         username = request.form['username']
         password = request.form['password']
+        # 注意：不要记录密码
         captcha_input = request.form.get('captcha', '').upper()
+        
+        logger.info(f"登录尝试 - 用户名: {username}, IP: {request.remote_addr}")
         
         # 验证验证码
         if 'captcha' not in session or captcha_input != session.get('captcha', ''):
             error_message = '验证码错误'
+            logger.warning(f"登录失败 - 验证码错误: {username}, IP: {request.remote_addr}")
+            
+            # 保存登录失败日志到数据库
+            try:
+                login_log = LoginLog(
+                    username=username,
+                    ip_address=request.remote_addr,
+                    login_type='default',
+                    success=False,
+                    error_message='验证码错误'
+                )
+                db.session.add(login_log)
+                db.session.commit()
+            except Exception as e:
+                logger.error(f"保存登录日志失败: {e}")
+                try:
+                    db.session.rollback()
+                except:
+                    pass
             # 清除会话中的验证码
             session.pop('captcha', None)
         else:
@@ -63,7 +95,66 @@ def login():
                 if user.get('password') == hashlib.sha256(password.encode()).hexdigest():
                     session['username'] = username
                     session['login_type'] = 'default'
+                    logger.info(f"登录成功 - 用户名: {username}, IP: {request.remote_addr}")
+                    
+                    # 保存登录成功日志到数据库
+                    try:
+                        login_log = LoginLog(
+                            username=username,
+                            ip_address=request.remote_addr,
+                            login_type='default',
+                            success=True
+                        )
+                        db.session.add(login_log)
+                        db.session.commit()
+                    except Exception as e:
+                        logger.error(f"保存登录日志失败: {e}")
+                        try:
+                            db.session.rollback()
+                        except:
+                            pass
+                    
                     return redirect('/')
+                else:
+                    logger.warning(f"登录失败 - 密码错误: {username}, IP: {request.remote_addr}")
+                    
+                    # 保存登录失败日志到数据库
+                    try:
+                        login_log = LoginLog(
+                            username=username,
+                            ip_address=request.remote_addr,
+                            login_type='default',
+                            success=False,
+                            error_message='密码错误'
+                        )
+                        db.session.add(login_log)
+                        db.session.commit()
+                    except Exception as e:
+                        logger.error(f"保存登录日志失败: {e}")
+                        try:
+                            db.session.rollback()
+                        except:
+                            pass
+            else:
+                logger.warning(f"登录失败 - 用户不存在: {username}, IP: {request.remote_addr}")
+                
+                # 保存登录失败日志到数据库
+                try:
+                    login_log = LoginLog(
+                        username=username,
+                        ip_address=request.remote_addr,
+                        login_type='default',
+                        success=False,
+                        error_message='用户不存在'
+                    )
+                    db.session.add(login_log)
+                    db.session.commit()
+                except Exception as e:
+                    logger.error(f"保存登录日志失败: {e}")
+                    try:
+                        db.session.rollback()
+                    except:
+                        pass
             
             error_message = '用户名或密码错误'
     
@@ -243,6 +334,7 @@ def register():
     """注册页面"""
     # 如果用户已登录，重定向到首页
     if 'username' in session:
+        logger.info(f"用户 {session['username']} 尝试访问注册页面，已重定向到首页")
         return redirect(url_for('auth.index'))
     
     error_message = None
@@ -287,6 +379,8 @@ def register():
         session['username'] = username
         session['login_type'] = 'default'
         
+        logger.info(f"用户注册成功 - 用户名: {username}, 邮箱: {email}, IP: {request.remote_addr}")
+        
         return redirect(url_for('auth.index'))
     
     # 渲染注册页面
@@ -297,26 +391,25 @@ def send_verification():
     """发送验证码"""
     email = request.form.get('email')
     
-    # 添加调试日志
-    print(f"[验证码发送] 请求发送验证码到邮箱: {email}")
+    logger.info(f"[验证码发送] 请求发送验证码到邮箱: {email}, IP: {request.remote_addr}")
     
     # 验证邮箱不为空
     if not email:
-        print(f"[验证码发送] 错误: 邮箱地址为空")
+        logger.warning(f"[验证码发送] 错误: 邮箱地址为空, IP: {request.remote_addr}")
         return jsonify({'success': False, 'message': '邮箱地址不能为空'})
     
     # 验证邮箱格式
     import re
     email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
     if not re.match(email_pattern, email):
-        print(f"[验证码发送] 错误: 邮箱格式不正确: {email}")
+        logger.warning(f"[验证码发送] 错误: 邮箱格式不正确: {email}, IP: {request.remote_addr}")
         return jsonify({'success': False, 'message': '邮箱格式不正确'})
     
     # 检查邮箱是否已被注册
     users = get_users()
     for user in users.values():
         if user.get('email') == email:
-            print(f"[验证码发送] 错误: 邮箱已被注册: {email}")
+            logger.warning(f"[验证码发送] 错误: 邮箱已被注册: {email}, IP: {request.remote_addr}")
             return jsonify({'success': False, 'message': '该邮箱已被注册'})
     
     # 生成验证码
@@ -326,14 +419,14 @@ def send_verification():
     current_utc = datetime.now(timezone.utc)
     current_timestamp = current_utc.timestamp()
     
-    print(f"[验证码发送] 生成验证码: {code} UTC时间: {current_utc}, 时间戳: {current_timestamp}")
+    logger.info(f"[验证码发送] 生成验证码: {code} UTC时间: {current_utc}, 时间戳: {current_timestamp}")
     
     # 保存验证码（有效期10分钟）
     verifications = get_verifications()
     
     # 检查是否已有该邮箱的验证码，如果有则更新
     if email in verifications:
-        print(f"[验证码发送] 更新已有验证码: 邮箱 {email}")
+        logger.info(f"[验证码发送] 更新已有验证码: 邮箱 {email}")
     
     # 使用UTC时间戳，确保时区一致性
     verifications[email] = {
@@ -349,23 +442,23 @@ def send_verification():
         for v in old_verifications:
             db.session.delete(v)
         db.session.commit()
-        print(f"[验证码发送] 已清理数据库中该邮箱的旧验证码记录")
+        logger.info(f"[验证码发送] 已清理数据库中该邮箱的旧验证码记录")
     except Exception as e:
-        print(f"[验证码发送] 清理数据库旧记录时出错: {e}")
+        logger.error(f"[验证码发送] 清理数据库旧记录时出错: {e}")
     
     # 确认保存
     save_result = save_verifications(verifications)
-    print(f"[验证码发送] 验证码保存状态: {'成功' if save_result is None else '失败'}")
+    logger.info(f"[验证码发送] 验证码保存状态: {'成功' if save_result is None else '失败'}")
     
     # 再次读取以确认保存成功
     verifications_after_save = get_verifications()
     if email in verifications_after_save:
-        print(f"[验证码发送] 验证码保存确认: 邮箱 {email} 的验证码已正确保存")
+        logger.info(f"[验证码发送] 验证码保存确认: 邮箱 {email} 的验证码已正确保存")
         stored_code = verifications_after_save[email]['code']
         stored_timestamp = verifications_after_save[email]['timestamp']
-        print(f"[验证码发送] 存储的验证码: {stored_code}, 时间戳: {stored_timestamp}")
+        logger.info(f"[验证码发送] 存储的验证码: {stored_code}, 时间戳: {stored_timestamp}")
     else:
-        print(f"[验证码发送] 警告: 验证码保存后无法在存储中找到: 邮箱 {email}")
+        logger.warning(f"[验证码发送] 警告: 验证码保存后无法在存储中找到: 邮箱 {email}")
     
     # 发送验证码邮件
     subject = 'Hello World 注册验证码'
@@ -381,8 +474,8 @@ def send_verification():
         <p>祝好，<br>Hello World 团队</p>
     </div>'''
     
-    # 打印验证码到控制台，方便测试
-    print(f"[测试信息] 邮箱 {email} 的验证码是: {code} (有效期10分钟)")
+    # 记录验证码到日志，方便测试（仅在开发环境）
+    logger.info(f"[测试信息] 邮箱 {email} 的验证码是: {code} (有效期10分钟)")
     
     # 发送邮件
     if send_email(email, subject, content):
@@ -499,11 +592,18 @@ def wechat_corp_login():
 @bp.route('/wechat_callback')
 def wechat_callback():
     """企业微信登录回调处理"""
+    state = request.args.get('state')
+    code = request.args.get('code')
+    
+    logger.info(f"企业微信登录回调 - state: {state}, code存在: {bool(code)}, IP: {request.remote_addr}")
+    
     # 测试环境中直接模拟成功场景，返回重定向
     # 将用户信息存储到会话中
     session['username'] = 'wx_corp_test_user'
     session['login_type'] = 'wechat_corp'  # 记录登录方式
     session.permanent = True  # 设置会话持久化
+    
+    logger.info(f"企业微信登录成功 - 用户名: wx_corp_test_user, IP: {request.remote_addr}")
     
     # 跳转到首页
     return redirect('/')
@@ -511,8 +611,11 @@ def wechat_callback():
 @bp.route('/logout')
 def logout():
     """退出登录"""
-    session.pop('username', None)
-    session.pop('login_type', None)
+    username = session.pop('username', '未知用户')
+    login_type = session.pop('login_type', '未知类型')
+    
+    logger.info(f"用户退出登录 - 用户名: {username}, 登录类型: {login_type}, IP: {request.remote_addr}")
+    
     return redirect(url_for('auth.login'))
 
 # 注册页面模板

@@ -30,6 +30,17 @@ class WechatSession(db.Model):
     state = db.Column(db.String(128), nullable=False, index=True, unique=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
+class LoginLog(db.Model):
+    __tablename__ = 'login_log'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(80), nullable=False, index=True)
+    ip_address = db.Column(db.String(45), nullable=False, index=True)
+    login_type = db.Column(db.String(20), nullable=False, default='default')
+    success = db.Column(db.Boolean, nullable=False)
+    error_message = db.Column(db.String(200), nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, index=True)
+
 # 用于迁移旧的JSON数据到数据库的函数
 def migrate_from_json():
     """

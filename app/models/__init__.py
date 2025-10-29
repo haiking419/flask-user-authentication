@@ -1,5 +1,5 @@
 import os
-from .db import User, Verification, WechatSession, db
+from .db import User, Verification, WechatSession, LoginLog, db
 
 def get_users():
     """获取所有用户数据（仅使用MySQL数据库）"""

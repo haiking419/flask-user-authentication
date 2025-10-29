@@ -1,0 +1,59 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Flask
+instance/
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+*.log
+
+# Backup files
+*.bak
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE files
+.idea/
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# Data files
+/data/backup/
+
+# Testing
+/tests/temp/
+coverage/
+.pytest_cache/
+.tox/
+
+# Production
+/build/
+/dist/
+*.egg-info/
+.Python

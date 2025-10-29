@@ -1,6 +1,7 @@
 import os
 from datetime import timedelta
 import secrets
+from urllib.parse import quote_plus
 
 class Config:
     """应用配置类"""
@@ -9,12 +10,22 @@ class Config:
     SECRET_KEY = secrets.token_hex(16)
     PERMANENT_SESSION_LIFETIME = timedelta(days=1)
     
-    # 数据库配置
+    # 数据库配置 - 默认使用MySQL
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-    SQLALCHEMY_DATABASE_URI = 'sqlite:///' + os.path.join(BASE_DIR, 'data', 'app.db')
+    
+    # 从环境变量构建数据库URL
+    DB_HOST = os.environ.get('DB_HOST', 'localhost')
+    DB_PORT = os.environ.get('DB_PORT', '3306')
+    DB_USER = os.environ.get('DB_USER', 'root')
+    DB_PASSWORD = os.environ.get('DB_PASSWORD', '')
+    DB_NAME = os.environ.get('DB_NAME', 'helloworld_db')
+    DB_CHARSET = os.environ.get('DB_CHARSET', 'utf8mb4')
+    
+    # 构建MySQL连接URL
+    SQLALCHEMY_DATABASE_URI = f"mysql+pymysql://{DB_USER}:{quote_plus(DB_PASSWORD)}@{DB_HOST}:{DB_PORT}/{DB_NAME}?charset={DB_CHARSET}"
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     
-    # 确保数据目录存在
+    # 确保数据目录存在（用于日志等非数据库文件）
     if not os.path.exists(os.path.join(BASE_DIR, 'data')):
         os.makedirs(os.path.join(BASE_DIR, 'data'))
     
@@ -44,10 +55,18 @@ class Config:
     APP_ENV = os.environ.get('APP_ENV', 'development')  # development, production
     # 确保默认使用开发环境以避免SECRET_KEY错误
 
-# MySQL配置
+# MySQL配置 - 所有环境统一使用此类
 class MySQLConfig(Config):
-    # 使用MySQL数据库（使用URL编码的密码）
-    SQLALCHEMY_DATABASE_URI = 'mysql+pymysql://helloworld_user:Helloworld%40123@172.18.0.1:33060/helloworld_db?charset=utf8mb4'
+    # 从环境变量构建数据库URL
+    DB_HOST = os.environ.get('DB_HOST', 'localhost')
+    DB_PORT = os.environ.get('DB_PORT', '3306')
+    DB_USER = os.environ.get('DB_USER', 'root')
+    DB_PASSWORD = os.environ.get('DB_PASSWORD', '')
+    DB_NAME = os.environ.get('DB_NAME', 'helloworld_db')
+    DB_CHARSET = os.environ.get('DB_CHARSET', 'utf8mb4')
+    
+    # 构建MySQL连接URL
+    SQLALCHEMY_DATABASE_URI = f"mysql+pymysql://{DB_USER}:{quote_plus(DB_PASSWORD)}@{DB_HOST}:{DB_PORT}/{DB_NAME}?charset={DB_CHARSET}"
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     
     # 连接池配置
@@ -69,7 +88,7 @@ class ProductionConfig(MySQLConfig):
     # 生产环境建议使用更强的密钥
     SECRET_KEY = os.environ.get('SECRET_KEY')
     
-    # 从环境变量覆盖数据库配置
+    # 保持对DATABASE_URL环境变量的兼容支持
     if os.environ.get('DATABASE_URL'):
         SQLALCHEMY_DATABASE_URI = os.environ.get('DATABASE_URL').replace('postgres://', 'postgresql://')
     
@@ -84,8 +103,16 @@ class TestingConfig(MySQLConfig):
     TESTING = True
     APP_ENV = 'testing'
     
-    # 测试环境也使用MySQL数据库
-    SQLALCHEMY_DATABASE_URI = 'mysql+pymysql://helloworld_user:Helloworld@123@192.168.7.7:32770/helloworld_db?charset=utf8mb4'
+    # 测试环境使用特定的MySQL配置
+    DB_HOST = os.environ.get('TEST_DB_HOST', '192.168.7.7')
+    DB_PORT = os.environ.get('TEST_DB_PORT', '32770')
+    DB_USER = os.environ.get('TEST_DB_USER', 'helloworld_user')
+    DB_PASSWORD = os.environ.get('TEST_DB_PASSWORD', 'Helloworld@123')
+    DB_NAME = os.environ.get('TEST_DB_NAME', 'helloworld_db')
+    DB_CHARSET = os.environ.get('DB_CHARSET', 'utf8mb4')
+    
+    # 重新构建测试环境的数据库URL
+    SQLALCHEMY_DATABASE_URI = f"mysql+pymysql://{DB_USER}:{quote_plus(DB_PASSWORD)}@{DB_HOST}:{DB_PORT}/{DB_NAME}?charset={DB_CHARSET}"
 
 # 根据环境变量选择配置
 config_by_name = {

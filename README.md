@@ -8,8 +8,7 @@
 
 ### 后端
 - **后端框架**：Flask
-- **数据存储**：MySQL
-- **ORM**：SQLAlchemy
+- **数据存储**：MySQL（统一使用，包括开发环境和生产环境）
 - **认证**：Flask会话机制
 - **API**：RESTful风格
 
@@ -18,25 +17,6 @@
 - **构建工具**：Vite
 - **路由**：React Router
 - **样式**：CSS + Font Awesome + Tailwind CSS
-
-## 功能特点
-
-### 1. 用户注册
-- 支持邮箱验证的用户注册流程
-- 6位数字验证码，有效期10分钟
-- 密码存储
-- 开发环境下自动在控制台显示验证码
-
-### 2. 用户登录
-- 传统用户名密码登录
-- 企业微信扫码登录
-- 会话持久化
-
-### 3. 前后端分离架构
-- 前端React应用独立部署和开发
-- 后端提供RESTful API接口
-- CORS支持跨域请求
-- API代理配置
 
 ## 功能特点
 
@@ -62,31 +42,38 @@
 helloworld/
 ├── app/                  # 后端Flask应用
 │   ├── __init__.py      # 应用初始化
-│   ├── config/          # 配置管理
 │   ├── models/          # 数据模型
+│   │   ├── __init__.py
 │   │   └── db.py        # 数据库模型和操作
 │   ├── routes/          # 路由定义
 │   │   ├── __init__.py
-│   │   ├── auth.py      # 原有认证路由
+│   │   ├── auth.py      # 认证路由
 │   │   └── api.py       # RESTful API路由
+│   ├── static/          # 静态文件
+│   ├── templates/       # HTML模板
 │   └── utils/           # 工具函数
+│       ├── __init__.py
+│       └── config_manager.py  # 配置管理
 ├── frontend/            # 前端React应用
-│   ├── public/          # 静态资源
 │   ├── src/             # 前端源代码
 │   │   ├── pages/       # 页面组件
-│   │   │   ├── Home.jsx     # 首页
-│   │   │   ├── Login.jsx    # 登录页
-│   │   │   └── Register.jsx # 注册页
 │   │   ├── App.jsx      # 应用入口组件
 │   │   ├── main.jsx     # React入口文件
+│   │   ├── App.css      # 应用样式
 │   │   └── index.css    # 全局样式
 │   ├── index.html       # HTML模板
 │   ├── package.json     # 前端依赖
 │   └── vite.config.js   # Vite配置
+├── data/                # JSON数据存储
+│   ├── users.json
+│   ├── verifications.json
+│   └── wechat_sessions.json
 ├── .env.development     # 开发环境配置
 ├── .env.production      # 生产环境配置
-├── run.py              # 后端启动脚本
-└── requirements.txt    # 后端依赖
+├── app.py               # Flask应用主文件
+├── config.py            # 配置文件
+├── run.py               # 后端启动脚本
+└── requirements.txt     # 后端依赖
 ```
 
 ## 关键模块说明
@@ -112,12 +99,12 @@ helloworld/
 - `send_email()` - 发送邮件（开发环境优化）
 - `verify_code()` - 验证验证码有效性
 
-### 4. 数据模型模块 (app/models/__init__.py)
+### 4. 数据模型模块 (app/models)
 
-处理 JSON 文件的读写操作：
-- `get_users()/save_users()` - 用户数据操作
-- `get_verifications()/save_verifications()` - 验证码数据操作
-- `get_wechat_sessions()/save_wechat_sessions()` - 微信会话数据操作
+- `app/models/db.py` - MySQL数据库模型和操作
+  - 定义用户、验证码和微信会话等数据模型
+  - 提供数据库初始化和清理功能
+  - 所有数据直接存储在MySQL数据库中，不再使用JSON文件
 
 ## 安装与运行
 
@@ -128,9 +115,17 @@ helloworld/
 pip install -r requirements.txt
 ```
 
-2. 配置环境变量:
-   - 复制 `.env.development` 或 `.env.production` 并根据需要修改配置
-   - 确保数据库连接信息正确
+2. 配置MySQL数据库:
+   - 确保MySQL服务已安装并运行
+   - 创建数据库：`CREATE DATABASE helloworld_db DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+   - 创建用户：`CREATE USER 'helloworld_user'@'%' IDENTIFIED BY 'Helloworld@123';
+   - 授权：`GRANT ALL PRIVILEGES ON helloworld_db.* TO 'helloworld_user'@'%';
+   - 刷新权限：`FLUSH PRIVILEGES;
+
+3. 配置环境变量:
+   - 参考`.env.example`文件创建或修改`.env.development`文件
+   - 填写数据库连接信息：DB_HOST、DB_PORT、DB_USER、DB_PASSWORD、DB_NAME
+   - 所有环境统一使用MySQL数据库配置
 
 3. 运行后端:
 ```bash
@@ -195,19 +190,11 @@ npm run build
 2. 确保数据库连接安全，避免硬编码敏感信息
 3. 前端构建后的文件应部署到静态文件服务器或CDN
 
-在 `app/__init__.py` 中可以修改以下配置：
+在 `app/__init__.py` 或 `config.py` 中可以修改以下配置：
 
 - 邮件服务器配置
 - 企业微信应用信息
 - 会话过期时间
-
-### 3. 运行应用
-
-```bash
-python run.py
-```
-
-应用将在 `http://localhost:5000` 启动。
 
 ## 验证码测试说明
 

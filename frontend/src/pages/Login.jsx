@@ -13,14 +13,35 @@ function Login() {
 
   useEffect(() => {
     // 获取企业微信登录二维码URL
-    fetch('/api/wechat_corp_login')
-      .then(response => response.json())
+    fetch('/api/wechat_qrcode')
+      .then(response => {
+        console.log('响应状态:', response.status)
+        console.log('响应类型:', response.headers.get('content-type'))
+        // 首先检查响应是否成功
+        if (!response.ok) {
+          throw new Error(`HTTP错误! 状态码: ${response.status}`)
+        }
+        // 然后检查响应类型是否为JSON
+        const contentType = response.headers.get('content-type')
+        if (!contentType || !contentType.includes('application/json')) {
+          // 如果不是JSON，获取文本内容以便调试
+          return response.text().then(text => {
+            console.error('非JSON响应:', text.substring(0, 100) + '...')
+            throw new Error('响应不是JSON格式')
+          })
+        }
+        return response.json()
+      })
       .then(data => {
-        if (data.qrcode_url) {
+        console.log('获取到的企业微信数据:', data)
+        if (data.success && data.qrcode_url) {
           setWechatQrcodeUrl(data.qrcode_url)
         }
       })
-      .catch(error => console.error('获取企业微信登录链接失败:', error))
+      .catch(error => {
+        console.error('获取企业微信登录链接失败:', error)
+        // 错误处理，避免页面崩溃
+      })
   }, [])
 
   const handleChange = (e) => {
@@ -54,12 +75,23 @@ function Login() {
     }
   }
 
-  const refreshCaptcha = () => {
-    const captchaImg = document.getElementById('captcha-img')
-    if (captchaImg) {
-      captchaImg.src = `/api/captcha?${Date.now()}`
+  const [captchaUrl, setCaptchaUrl] = useState('/api/captcha_image')
+  
+  const refreshCaptcha = async () => {
+    try {
+      const response = await fetch('/api/captcha')
+      const data = await response.json()
+      if (data.success && data.captcha_url) {
+        setCaptchaUrl(data.captcha_url)
+      }
+    } catch (error) {
+      console.error('刷新验证码失败:', error)
     }
   }
+  
+  useEffect(() => {
+    refreshCaptcha()
+  }, [])
 
   return (
     <div className="form-container">
@@ -133,12 +165,12 @@ function Login() {
                 required
                 className="pl-10 w-full px-3 py-3 border border-gray-300 rounded-lg shadow-sm focus:outline-none input-focus transition duration-200"
                 placeholder="请输入验证码"
-                maxlength="4"
+                maxLength="4"
               />
             </div>
             <img
               id="captcha-img"
-              src="/api/captcha"
+              src={captchaUrl}
               alt="验证码"
               className="w-32 h-12 border border-gray-300 rounded-lg cursor-pointer hover:opacity-90 transition-opacity"
               onClick={refreshCaptcha}

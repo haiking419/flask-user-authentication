@@ -28,11 +28,9 @@ except Exception as e:
 config_name = os.environ.get('APP_ENV', 'development')
 logger.info(f"应用环境: {config_name}")
 
-# 确保使用MySQL配置
-if config_name not in config_by_name:
-    config = MySQLConfig()
-else:
-    config = config_by_name[config_name]
+# 确保所有环境都使用MySQL配置
+config = MySQLConfig()
+logger.info(f"数据库配置: {config.SQLALCHEMY_DATABASE_URI}")
 
 # 初始化Flask应用
 app = Flask(__name__)
@@ -50,8 +48,7 @@ if not config_manager.validate_all():
         logger.error(f"配置错误 - {key}: {error}")
 
 # 初始化数据库
-from app.models.db import db, migrate_from_json, cleanup_expired_data
-db.init_app(app)
+from app.models.db import init_db, cleanup_expired_data
 
 # 从配置管理器获取常量
 MAIL_SERVER = config_manager.get('MAIL_SERVER')
@@ -69,23 +66,19 @@ WECHAT_REDIRECT_URI = config_manager.get('WECHAT_REDIRECT_URI')
 
 # 数据库初始化
 try:
-    with app.app_context():
-        # 创建数据库表
-        db.create_all()
-        
-        # 执行数据迁移（无论环境，因为migrate_from_json函数中有容错处理）
-        try:
-            migrate_from_json()
-        except Exception as e:
-            print(f"数据迁移过程中的异常: {e}")
-        
-        # 清理过期数据
-        try:
+    # 使用新的init_db函数初始化MySQL数据库
+    init_db(app)
+    
+    # 清理过期数据
+    try:
+        with app.app_context():
             cleanup_expired_data()
-        except Exception as e:
-            print(f"清理过期数据时的异常: {e}")
+            logger.info("过期数据清理完成")
+    except Exception as e:
+        logger.error(f"清理过期数据时的异常: {e}")
 except Exception as e:
-    print(f"数据库连接失败: {e}")
+    logger.error(f"数据库初始化失败: {e}")
+    print(f"数据库初始化失败: {e}")
     print("应用将继续运行，但数据库功能可能受限。")
 
 

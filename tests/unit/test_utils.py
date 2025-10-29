@@ -3,12 +3,13 @@ import time
 import json
 import os
 import sys
+import io
 from unittest.mock import patch, MagicMock
 
 # 添加项目根目录到Python路径
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.utils import generate_verification_code, generate_wechat_state, send_email, verify_code
+from app.utils import generate_verification_code, generate_wechat_state, send_email, verify_code, generate_captcha, PIL_AVAILABLE
 
 class TestUtils(unittest.TestCase):
     
@@ -98,7 +99,8 @@ class TestUtils(unittest.TestCase):
         self.assertFalse(result)
     
     @patch('app.models.get_verifications')
-    def test_verify_code_expired(self, mock_get_verifications):
+    @patch('app.models.save_verifications')
+    def test_verify_code_expired(self, mock_save_verifications, mock_get_verifications):
         """测试验证码过期的情况"""
         # 模拟验证码数据 - 使用11分钟前的时间戳，确保已过期
         current_time = time.time()
@@ -112,10 +114,13 @@ class TestUtils(unittest.TestCase):
         
         # 验证过期的验证码
         with patch('time.time', return_value=current_time):
+            # 避免调试逻辑影响测试结果，我们需要确保过期时间设置正确
             result = verify_code('test@example.com', '123456')
             
             # 验证结果
             self.assertFalse(result)
+            # 验证验证码被删除
+            mock_save_verifications.assert_called()
     
     @patch('app.models.get_verifications')
     def test_verify_code_not_found(self, mock_get_verifications):
@@ -128,6 +133,52 @@ class TestUtils(unittest.TestCase):
         
         # 验证结果
         self.assertFalse(result)
+    
+    def test_generate_captcha(self):
+        """测试图形验证码生成功能"""
+        # 生成验证码
+        code, image = generate_captcha()
+        
+        # 验证验证码长度
+        self.assertEqual(len(code), 4)
+        
+        # 验证验证码字符集（只包含指定的字符）
+        valid_chars = set('ABCDEFGHJKLMNPQRSTUVWXYZ23456789')
+        self.assertTrue(all(c in valid_chars for c in code))
+        
+        # 验证多次生成的验证码不同（概率测试）
+        codes = set()
+        for _ in range(100):
+            codes.add(generate_captcha()[0])
+        self.assertGreater(len(codes), 90)  # 期望至少90个不同的验证码
+    
+    def test_generate_captcha_image_type(self):
+        """测试图形验证码图片类型"""
+        # 生成验证码
+        code, image = generate_captcha()
+        
+        # 如果PIL可用，验证图片是BytesIO对象
+        if PIL_AVAILABLE:
+            self.assertIsInstance(image, io.BytesIO)
+            # 验证图片不为空
+            image.seek(0)
+            image_data = image.read()
+            self.assertGreater(len(image_data), 0)
+        else:
+            # 如果PIL不可用，图片应为None
+            self.assertIsNone(image)
+    
+    @patch('app.utils.PIL_AVAILABLE', False)
+    def test_generate_captcha_without_pil(self):
+        """测试在没有PIL库的情况下生成验证码"""
+        # 生成验证码
+        code, image = generate_captcha()
+        
+        # 验证验证码长度和类型
+        self.assertEqual(len(code), 6)  # 在没有PIL时使用generate_verification_code，长度为6
+        self.assertTrue(code.isdigit())
+        # 验证图片为None
+        self.assertIsNone(image)
 
 if __name__ == '__main__':
     unittest.main()

@@ -4,8 +4,19 @@ import smtplib
 import io
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from app import MAIL_SERVER, MAIL_PORT, MAIL_USERNAME, MAIL_PASSWORD, MAIL_DEFAULT_SENDER
-from app import app
+
+# 导入配置管理器
+from app.utils.config_manager import ConfigManager, config_manager, get_config_manager, init_config_manager
+
+# 使用配置管理器获取配置，避免循环导入
+from app.utils.config_manager import get_config_manager
+config_manager = get_config_manager()
+
+# 延迟获取配置值，在实际使用时再获取
+# 这里不直接导入app，避免循环导入
+
+# 导出配置管理器
+__all__ = ['ConfigManager', 'config_manager', 'get_config_manager', 'init_config_manager']
 
 # 导入Pillow库用于生成图形验证码
 try:
@@ -21,13 +32,8 @@ def generate_verification_code():
     import random
     import time
     
-    # 确保使用应用配置中的验证码长度
-    try:
-        from app import app
-        code_length = app.config.get('VERIFICATION_CODE_LENGTH', 6)
-    except:
-        # 如果无法访问app配置，使用默认值
-        code_length = 6
+    # 使用默认值，避免导入app
+    code_length = 6
     
     # 每次生成验证码时，使用时间戳作为随机数种子
     # 这样可以确保每次生成的验证码都是不同的
@@ -187,8 +193,16 @@ def verify_code(email, code):
     # 使用UTC时间
     current_time = datetime.now(timezone.utc)
     
-    # 从配置中获取验证码过期时间
-    expire_time = app.config.get('VERIFICATION_CODE_EXPIRE', 600)
+    # 使用默认值，避免直接引用app对象
+    expire_time = 600  # 默认10分钟过期
+    
+    # 尝试从app获取配置，但如果app不存在也不会报错
+    try:
+        from app import app as flask_app
+        expire_time = flask_app.config.get('VERIFICATION_CODE_EXPIRE', 600)
+    except (ImportError, AttributeError):
+        # 如果导入失败或没有app对象，使用默认值
+        pass
     
     # 调试输出当前存储的验证码
     stored_code = verification_info['code']

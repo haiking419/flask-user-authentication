@@ -1,16 +1,42 @@
-# Hello World Web 应用
+# 前后端分离应用
 
 ## 项目概述
 
-这是一个基于 Flask 框架开发的简单 Web 应用，提供用户注册、登录功能，支持普通账号登录和企业微信扫码登录。应用采用 JSON 文件存储数据，适合学习和小型应用部署。
+这是一个使用Flask后端和React前端的前后端分离应用示例，提供用户注册、登录功能，支持普通账号登录和企业微信扫码登录。应用采用MySQL数据库存储数据。
 
 ## 技术栈
 
+### 后端
 - **后端框架**：Flask
-- **数据存储**：JSON 文件
-- **前端技术**：HTML、Tailwind CSS、Font Awesome
-- **认证方式**：账号密码认证、企业微信 OAuth2.0
-- **验证码系统**：邮箱验证码
+- **数据存储**：MySQL
+- **ORM**：SQLAlchemy
+- **认证**：Flask会话机制
+- **API**：RESTful风格
+
+### 前端
+- **框架**：React
+- **构建工具**：Vite
+- **路由**：React Router
+- **样式**：CSS + Font Awesome + Tailwind CSS
+
+## 功能特点
+
+### 1. 用户注册
+- 支持邮箱验证的用户注册流程
+- 6位数字验证码，有效期10分钟
+- 密码存储
+- 开发环境下自动在控制台显示验证码
+
+### 2. 用户登录
+- 传统用户名密码登录
+- 企业微信扫码登录
+- 会话持久化
+
+### 3. 前后端分离架构
+- 前端React应用独立部署和开发
+- 后端提供RESTful API接口
+- CORS支持跨域请求
+- API代理配置
 
 ## 功能特点
 
@@ -34,28 +60,33 @@
 
 ```
 helloworld/
-├── app/
-│   ├── __init__.py      # 应用初始化和配置
-│   ├── models/          # 数据模型层
-│   │   └── __init__.py
-│   ├── routes/          # 路由控制器
+├── app/                  # 后端Flask应用
+│   ├── __init__.py      # 应用初始化
+│   ├── config/          # 配置管理
+│   ├── models/          # 数据模型
+│   │   └── db.py        # 数据库模型和操作
+│   ├── routes/          # 路由定义
 │   │   ├── __init__.py
-│   │   └── auth.py      # 认证相关路由
-│   ├── utils/           # 工具函数
-│   │   └── __init__.py
-│   ├── static/          # 静态资源（CSS、JS等）
-│   └── templates/       # HTML模板
-├── data/                # 数据存储目录
-│   ├── users.json       # 用户数据
-│   ├── verifications.json  # 验证码数据
-│   └── wechat_sessions.json  # 微信会话数据
-├── app.py               # 应用主文件（已迁移到__init__.py）
-├── run.py               # 应用入口
-├── run_tests.py         # 测试运行器
-├── test_models.py       # 模型层测试
-├── test_routes.py       # 路由层测试
-├── test_utils.py        # 工具函数测试
-└── requirements.txt     # 项目依赖
+│   │   ├── auth.py      # 原有认证路由
+│   │   └── api.py       # RESTful API路由
+│   └── utils/           # 工具函数
+├── frontend/            # 前端React应用
+│   ├── public/          # 静态资源
+│   ├── src/             # 前端源代码
+│   │   ├── pages/       # 页面组件
+│   │   │   ├── Home.jsx     # 首页
+│   │   │   ├── Login.jsx    # 登录页
+│   │   │   └── Register.jsx # 注册页
+│   │   ├── App.jsx      # 应用入口组件
+│   │   ├── main.jsx     # React入口文件
+│   │   └── index.css    # 全局样式
+│   ├── index.html       # HTML模板
+│   ├── package.json     # 前端依赖
+│   └── vite.config.js   # Vite配置
+├── .env.development     # 开发环境配置
+├── .env.production      # 生产环境配置
+├── run.py              # 后端启动脚本
+└── requirements.txt    # 后端依赖
 ```
 
 ## 关键模块说明
@@ -88,15 +119,81 @@ helloworld/
 - `get_verifications()/save_verifications()` - 验证码数据操作
 - `get_wechat_sessions()/save_wechat_sessions()` - 微信会话数据操作
 
-## 开发环境配置
+## 安装与运行
 
-### 1. 安装依赖
+### 后端（Flask）
 
+1. 安装依赖:
 ```bash
 pip install -r requirements.txt
 ```
 
-### 2. 配置修改
+2. 配置环境变量:
+   - 复制 `.env.development` 或 `.env.production` 并根据需要修改配置
+   - 确保数据库连接信息正确
+
+3. 运行后端:
+```bash
+python run.py
+```
+
+后端服务将在 http://localhost:5000 启动。
+
+### 前端（React）
+
+1. 进入前端目录:
+```bash
+cd frontend
+```
+
+2. 安装依赖:
+```bash
+npm install
+```
+
+3. 运行开发服务器:
+```bash
+npm run dev
+```
+
+前端应用将在 http://localhost:3000 启动，并自动代理API请求到后端。
+
+## API接口
+
+### 认证相关
+- POST `/api/login` - 用户登录
+- POST `/api/register` - 用户注册
+- POST `/api/logout` - 用户登出
+- GET `/api/user_info` - 获取用户信息
+- POST `/api/send_verification` - 发送验证码
+- GET `/api/captcha` - 获取验证码
+
+### 企业微信
+- GET `/api/wechat_qrcode` - 获取企业微信登录二维码
+- GET `/api/check_wechat_login/<session_key>` - 检查企业微信登录状态
+
+## 部署
+
+### 开发环境
+1. 启动后端: `python run.py`
+2. 启动前端: `cd frontend && npm run dev`
+
+### 生产环境
+1. 构建前端:
+```bash
+cd frontend
+npm install
+npm run build
+```
+
+2. 部署后端（可使用Gunicorn、uWSGI等WSGI服务器）
+3. 配置Web服务器（如Nginx）提供静态文件和代理API请求
+
+## 注意事项
+
+1. 在生产环境中，务必修改默认密钥和数据库配置
+2. 确保数据库连接安全，避免硬编码敏感信息
+3. 前端构建后的文件应部署到静态文件服务器或CDN
 
 在 `app/__init__.py` 中可以修改以下配置：
 

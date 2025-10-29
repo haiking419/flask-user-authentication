@@ -3,10 +3,23 @@ import hashlib
 import time
 import requests
 import logging
-from datetime import datetime
-from app.models import get_users, save_users, get_verifications, save_verifications, get_wechat_sessions, save_wechat_sessions, LoginLog, db
+import re
+from datetime import datetime, timezone
+from app.models import get_users, save_users, get_verifications, save_verifications, get_wechat_sessions, save_wechat_sessions, LoginLog, db, Verification
 from app.utils import generate_verification_code, generate_wechat_state, send_email, verify_code, generate_captcha
-from app import WECHAT_CORP_ID, WECHAT_AGENT_ID, WECHAT_APP_SECRET, WECHAT_REDIRECT_URI
+
+# 导入配置管理器
+from app.utils.config_manager import get_config_manager
+config_manager = get_config_manager()
+
+# 企业微信配置（从配置管理器获取）
+WECHAT_CORP_ID = config_manager.get('WECHAT_CORP_ID')
+WECHAT_AGENT_ID = config_manager.get('WECHAT_AGENT_ID')
+WECHAT_APP_SECRET = config_manager.get('WECHAT_APP_SECRET')
+WECHAT_REDIRECT_URI = config_manager.get('WECHAT_REDIRECT_URI')
+
+# 应用环境判断
+IS_PRODUCTION = config_manager.is_production()
 
 # 配置日志记录器
 logging.basicConfig(
@@ -487,18 +500,41 @@ def send_verification():
 
 @bp.route('/wechat_corp_login')
 def wechat_corp_login():
-    """企业微信登录页面"""
+    """企业微信扫码登录"""
+    # 获取查询参数
+    ip_address = request.remote_addr
+    mode = request.args.get('mode', 'production')  # 支持测试模式
+    
+    # 生成state参数，用于防止CSRF攻击
     state = generate_wechat_state()
     
-    # 生成企业微信扫码登录URL
-    wechat_qrcode_url = f"https://open.work.weixin.qq.com/wwopen/sso/qrConnect?corpid={WECHAT_CORP_ID}&agentid={WECHAT_AGENT_ID}&redirect_uri={WECHAT_REDIRECT_URI}&state={state}"
+    # 保存state到数据库，用于后续验证
+    try:
+        wechat_sessions = get_wechat_sessions()
+        wechat_sessions[state] = {
+            'timestamp': time.time(),
+            'ip_address': ip_address,
+            'mode': mode
+        }
+        save_wechat_sessions(wechat_sessions)
+    except Exception as e:
+        logger.error(f"保存企业微信登录state失败: {e}, IP: {ip_address}")
+        return "生成登录二维码失败，请稍后重试", 500
     
-    # 保存微信状态码到数据库
-    wechat_sessions = get_wechat_sessions()
-    wechat_sessions[state] = {'timestamp': time.time()}
-    save_wechat_sessions(wechat_sessions)
+    logger.info(f"生成企业微信登录二维码 - state: {state}, 模式: {mode}, IP: {ip_address}")
     
-    return render_template_string('''<!DOCTYPE html>
+    # 测试模式处理
+    if mode == 'test':
+        # 构造测试环境的模拟扫码URL
+        qr_code_url = f"/wechat_callback?state={state}&code=test_corp_code_{int(time.time())}"
+        test_info = {
+            'state': state,
+            'test_mode': True,
+            'test_callback_url': qr_code_url,
+            'test_hint': '测试模式：点击下方链接模拟扫码成功'
+        }
+        logger.info(f"测试模式企业微信登录 - 生成测试回调链接: {qr_code_url}, IP: {ip_address}")
+        return render_template_string('''<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
@@ -537,13 +573,107 @@ def wechat_corp_login():
             <div class="inline-flex items-center justify-center w-20 h-20 bg-wechat_corp/10 text-wechat_corp rounded-full mb-6">
                 <i class="fa fa-building text-4xl"></i>
             </div>
+            <h1 class="text-2xl font-bold text-gray-800 mb-4">企业微信登录（测试模式）</h1>
+            <p class="text-gray-600 mb-8">测试环境：点击链接模拟扫码</p>
+            
+            <div class="flex justify-center mb-8">
+                <a href="{{ qrcode_url }}" class="bg-blue-100 hover:bg-blue-200 text-blue-700 py-3 px-6 rounded-lg transition-colors">
+                    {{ test_info.test_hint }}
+                </a>
+            </div>
+            
+            <div class="mt-6 p-4 bg-blue-50 border border-blue-100 rounded-lg">
+                <p class="text-blue-700 text-sm">
+                    <i class="fa fa-info-circle mr-2"></i>
+                    测试状态: {{ test_info.state }}
+                </p>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
+    ''', state=state, qrcode_url=qr_code_url, test_info=test_info)
+    
+    # 生产环境：构造企业微信扫码登录URL
+    try:
+        # 对redirect_uri进行完整的URL编码（包括所有特殊字符）
+        import urllib.parse
+        encoded_redirect_uri = urllib.parse.quote(WECHAT_REDIRECT_URI, safe='')
+        
+        # 验证必要的配置参数
+        if not WECHAT_CORP_ID or WECHAT_CORP_ID == 'wx1234567890abcdef':
+            logger.warning(f"企业微信CORP_ID未配置或使用默认值 - IP: {ip_address}")
+        if not WECHAT_AGENT_ID or WECHAT_AGENT_ID == '1000001':
+            logger.warning(f"企业微信AGENT_ID未配置或使用默认值 - IP: {ip_address}")
+        if not WECHAT_APP_SECRET or WECHAT_APP_SECRET == 'abcdef1234567890abcdef1234567890':
+            logger.warning(f"企业微信APP_SECRET未配置或使用默认值 - IP: {ip_address}")
+        if not WECHAT_REDIRECT_URI or WECHAT_REDIRECT_URI == 'http://localhost:5000/wechat_callback':
+            logger.warning(f"企业微信REDIRECT_URI未配置或使用默认值 - IP: {ip_address}")
+        
+        # 构造企业微信扫码登录URL
+        qr_code_url = f"https://open.work.weixin.qq.com/wwopen/sso/qrConnect?corpid={WECHAT_CORP_ID}&agentid={WECHAT_AGENT_ID}&redirect_uri={encoded_redirect_uri}&state={state}"
+        
+        logger.info(f"生产环境企业微信登录二维码生成成功 - state: {state}, URL: {qr_code_url[:100]}..., IP: {ip_address}")
+        
+        # 渲染登录页面，显示二维码
+        return render_template_string('''<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>企业微信登录 - Hello World</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdn.jsdelivr.net/npm/font-awesome@4.7.0/css/font-awesome.min.css" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#3b82f6',
+                        secondary: '#10b981',
+                        accent: '#8b5cf6',
+                        wechat_corp: '#0084ff',
+                        warning: '#f59e0b',
+                    },
+                }
+            }
+        }
+    </script>
+    <style type="text/tailwindcss">
+        @layer utilities {
+            .content-auto {
+                content-visibility: auto;
+            }
+            .card-shadow {
+                box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.1);
+            }
+        }
+    </style>
+</head>
+<body class="bg-gradient-to-br from-blue-50 to-indigo-50 min-h-screen flex items-center justify-center p-4">
+    <div class="w-full max-w-md">
+        <div class="bg-white rounded-2xl p-8 card-shadow text-center">
+            <div class="inline-flex items-center justify-center w-20 h-20 bg-wechat_corp/10 text-wechat_corp rounded-full mb-6">
+                <i class="fa fa-building text-4xl"></i>
+            </div>
             <h1 class="text-2xl font-bold text-gray-800 mb-4">企业微信登录</h1>
             <p class="text-gray-600 mb-8">请使用企业微信扫码登录</p>
             
+            <!-- 二维码区域 -->
             <div class="flex justify-center mb-8">
                 <div class="w-64 h-64 border-2 border-gray-200 rounded-lg bg-white overflow-hidden">
-                    <img src="{{ qrcode_url }}" alt="企业微信登录二维码" class="w-full h-full object-contain">
+                    <a href="{{ qrcode_url }}" target="_blank">
+                        <img src="{{ qrcode_url }}" alt="企业微信登录二维码" class="w-full h-full object-contain">
+                    </a>
                 </div>
+            </div>
+            
+            <!-- 配置检查提示 -->
+            <div class="mb-6 p-3 bg-yellow-50 border border-yellow-100 rounded-lg">
+                <p class="text-yellow-700 text-sm">
+                    <i class="fa fa-exclamation-circle mr-2"></i>
+                    如果扫码时显示"参数错误"，请确认企业微信应用配置已正确设置
+                </p>
             </div>
             
             <div class="text-sm text-gray-500">
@@ -551,27 +681,19 @@ def wechat_corp_login():
                 <div id="countdown" class="text-primary font-medium mt-2">60</div>
             </div>
             
-            <!-- 测试账号提示 -->
-            <div class="mt-6 p-4 bg-blue-50 border border-blue-100 rounded-lg">
-                <p class="text-blue-700 text-sm">
-                    <i class="fa fa-lightbulb-o mr-2"></i>
-                    测试功能：点击下方按钮模拟企业微信扫码登录成功
-                </p>
-                <form action="{{ url_for('auth.wechat_callback') }}" method="get" class="mt-4">
-                    <input type="hidden" name="code" value="test_corp_code_{{ state }}">
-                    <input type="hidden" name="state" value="{{ state }}">
-                    <button type="submit" class="bg-blue-100 hover:bg-blue-200 text-blue-700 py-2 px-4 rounded-lg text-sm transition-colors">
-                        模拟登录成功
-                    </button>
-                </form>
-            </div>
+            <!-- 二维码刷新按钮 -->
+            <button id="refresh-btn" class="mt-4 text-sm text-primary hover:text-primary/80 transition-colors">
+                <i class="fa fa-refresh mr-1"></i> 刷新二维码
+            </button>
         </div>
     </div>
     
     <script>
         let countdown = 60;
         const countdownElement = document.getElementById('countdown');
+        const refreshButton = document.getElementById('refresh-btn');
         
+        // 倒计时逻辑
         const timer = setInterval(() => {
             countdown--;
             countdownElement.textContent = countdown;
@@ -581,32 +703,200 @@ def wechat_corp_login():
                 countdownElement.textContent = '已过期';
                 countdownElement.classList.remove('text-primary');
                 countdownElement.classList.add('text-red-500');
-                // 可以在这里添加刷新二维码的逻辑
+                refreshButton.classList.remove('opacity-50', 'cursor-not-allowed');
+                refreshButton.disabled = false;
             }
         }, 1000);
+        
+        // 刷新二维码功能
+        refreshButton.addEventListener('click', () => {
+            window.location.reload();
+        });
     </script>
 </body>
 </html>
-    ''', state=state, qrcode_url=wechat_qrcode_url)
+    ''', state=state, qrcode_url=qr_code_url)
+    except Exception as e:
+        logger.error(f"生成企业微信登录URL失败: {e}, IP: {ip_address}")
+        return "生成登录二维码失败，请稍后重试", 500
 
 @bp.route('/wechat_callback')
 def wechat_callback():
     """企业微信登录回调处理"""
     state = request.args.get('state')
     code = request.args.get('code')
+    ip_address = request.remote_addr
     
-    logger.info(f"企业微信登录回调 - state: {state}, code存在: {bool(code)}, IP: {request.remote_addr}")
+    logger.info(f"企业微信登录回调 - state: {state}, code存在: {bool(code)}, IP: {ip_address}")
     
-    # 测试环境中直接模拟成功场景，返回重定向
-    # 将用户信息存储到会话中
-    session['username'] = 'wx_corp_test_user'
-    session['login_type'] = 'wechat_corp'  # 记录登录方式
-    session.permanent = True  # 设置会话持久化
+    # 1. 验证请求参数
+    if not state or not code:
+        logger.warning(f"企业微信登录回调参数不完整 - IP: {ip_address}")
+        return "无效的请求参数", 400
     
-    logger.info(f"企业微信登录成功 - 用户名: wx_corp_test_user, IP: {request.remote_addr}")
+    # 2. 验证state是否有效
+    try:
+        wechat_sessions = get_wechat_sessions()
+        # 添加调试日志
+        logger.info(f"获取到的微信会话数量: {len(wechat_sessions)}, 会话键列表: {list(wechat_sessions.keys())[:3]}")
+        
+        if state not in wechat_sessions:
+            logger.warning(f"企业微信登录回调state无效 - state: {state}, IP: {ip_address}")
+            # 对于测试模式，允许跳过state验证
+            if code.startswith('test_corp_code_'):
+                logger.info(f"测试模式下跳过state验证 - IP: {ip_address}")
+                # 创建临时会话数据
+                wechat_sessions[state] = {'timestamp': time.time(), 'ip_address': ip_address, 'mode': 'test'}
+            else:
+                return "无效的请求参数", 400
+        
+        # 3. 检查state是否过期（10分钟内有效）
+        session_timestamp = wechat_sessions[state]['timestamp']
+        if time.time() - session_timestamp > 600:
+            logger.warning(f"企业微信登录回调state已过期 - state: {state}, IP: {ip_address}")
+            # 删除过期的session
+            del wechat_sessions[state]
+            save_wechat_sessions(wechat_sessions)
+            return "登录已过期，请重新扫码", 400
+        
+    except Exception as e:
+        logger.error(f"验证企业微信state时发生错误: {e}, IP: {ip_address}")
+        return "验证失败，请重新尝试", 500
     
-    # 跳转到首页
-    return redirect('/')
+    # 4. 在开发/测试环境下的模拟登录逻辑
+    if code.startswith('test_corp_code_'):
+        logger.info(f"测试环境企业微信登录 - state: {state}, IP: {ip_address}")
+        
+        # 生成测试用户名
+        username = f"wx_corp_test_user_{int(time.time()) % 1000}"
+        
+        # 将用户信息存储到会话中
+        session['username'] = username
+        session['login_type'] = 'wechat_corp'  # 记录登录方式
+        session.permanent = True  # 设置会话持久化
+        
+        # 记录登录日志
+        try:
+            login_log = LoginLog(
+                username=username,
+                ip_address=ip_address,
+                login_type='wechat_corp',
+                success=True
+            )
+            db.session.add(login_log)
+            db.session.commit()
+        except Exception as e:
+            logger.error(f"保存企业微信登录日志失败: {e}")
+            try:
+                db.session.rollback()
+            except:
+                pass
+        
+        logger.info(f"企业微信测试登录成功 - 用户名: {username}, IP: {ip_address}")
+        
+        # 清理已使用的state
+        try:
+            del wechat_sessions[state]
+            save_wechat_sessions(wechat_sessions)
+        except:
+            pass
+        
+        # 跳转到首页
+        return redirect('/')
+    
+    # 5. 生产环境：调用企业微信API获取用户信息
+    try:
+        # 5.1 获取access_token
+        access_token_url = f"https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid={WECHAT_CORP_ID}&corpsecret={WECHAT_APP_SECRET}"
+        logger.info(f"调用企业微信API获取access_token - IP: {ip_address}")
+        
+        response = requests.get(access_token_url, timeout=10)
+        access_token_data = response.json()
+        
+        if access_token_data.get('errcode') != 0:
+            logger.error(f"获取企业微信access_token失败: {access_token_data}, IP: {ip_address}")
+            return "登录失败，请稍后重试", 500
+        
+        access_token = access_token_data.get('access_token')
+        
+        # 5.2 使用code获取用户信息
+        user_info_url = f"https://qyapi.weixin.qq.com/cgi-bin/user/getuserinfo?access_token={access_token}&code={code}"
+        logger.info(f"调用企业微信API获取用户信息 - IP: {ip_address}")
+        
+        user_info_response = requests.get(user_info_url, timeout=10)
+        user_info_data = user_info_response.json()
+        
+        if user_info_data.get('errcode') != 0:
+            logger.error(f"获取企业微信用户信息失败: {user_info_data}, IP: {ip_address}")
+            return "登录失败，请稍后重试", 500
+        
+        # 5.3 获取用户详情
+        userid = user_info_data.get('UserId')
+        if not userid:
+            logger.error(f"企业微信返回的用户信息中没有UserId: {user_info_data}, IP: {ip_address}")
+            return "登录失败，请确保您是企业成员", 403
+        
+        # 5.4 获取用户详细信息
+        user_detail_url = f"https://qyapi.weixin.qq.com/cgi-bin/user/get?access_token={access_token}&userid={userid}"
+        user_detail_response = requests.get(user_detail_url, timeout=10)
+        user_detail_data = user_detail_response.json()
+        
+        if user_detail_data.get('errcode') != 0:
+            logger.error(f"获取企业微信用户详细信息失败: {user_detail_data}, IP: {ip_address}")
+            return "登录失败，请稍后重试", 500
+        
+        # 6. 处理用户信息，创建或更新用户
+        # 生成用户名（可以根据需要调整规则）
+        username = f"wx_corp_{userid}"
+        
+        # 这里可以根据需要查询数据库，创建或更新用户信息
+        # 为了演示，我们直接使用微信返回的用户信息
+        
+        # 7. 将用户信息存储到会话中
+        session['username'] = username
+        session['login_type'] = 'wechat_corp'  # 记录登录方式
+        session['user_info'] = {
+            'userid': userid,
+            'name': user_detail_data.get('name', '企业微信用户'),
+            'avatar': user_detail_data.get('avatar', '')
+        }  # 存储用户信息
+        session.permanent = True  # 设置会话持久化
+        
+        # 8. 记录登录日志
+        try:
+            login_log = LoginLog(
+                username=username,
+                ip_address=ip_address,
+                login_type='wechat_corp',
+                success=True
+            )
+            db.session.add(login_log)
+            db.session.commit()
+        except Exception as e:
+            logger.error(f"保存企业微信登录日志失败: {e}")
+            try:
+                db.session.rollback()
+            except:
+                pass
+        
+        logger.info(f"企业微信登录成功 - 用户名: {username}, userid: {userid}, IP: {ip_address}")
+        
+        # 9. 清理已使用的state
+        try:
+            del wechat_sessions[state]
+            save_wechat_sessions(wechat_sessions)
+        except:
+            pass
+        
+        # 10. 跳转到首页
+        return redirect('/')
+        
+    except requests.exceptions.RequestException as e:
+        logger.error(f"调用企业微信API时发生网络错误: {e}, IP: {ip_address}")
+        return "网络连接失败，请检查网络后重试", 500
+    except Exception as e:
+        logger.error(f"企业微信登录过程中发生未知错误: {e}, IP: {ip_address}")
+        return "登录失败，请稍后重试", 500
 
 @bp.route('/logout')
 def logout():

@@ -90,8 +90,14 @@ from app.routes import auth
 from app.routes.api import api
 
 # 配置CORS支持
-CORS(app, resources={r"/api/*": {"origins": "*"}})
+CORS(app, resources={
+    r"/api/*": {"origins": "*", "allow_headers": "*", "expose_headers": "*", "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"]},
+    r"/wechat_callback": {"origins": "*", "allow_headers": "*", "expose_headers": "*", "methods": ["GET", "POST"]}
+})
 
 # 注册蓝图
 app.register_blueprint(auth.bp)
 app.register_blueprint(api)
+
+if __name__ == '__main__':
+    app.run(debug=True, host='0.0.0.0', port=5000)

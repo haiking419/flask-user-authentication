@@ -296,9 +296,13 @@ def get_wechat_qrcode():
         except Exception as save_error:
             print(f"[DEBUG] 保存state到数据库失败: {str(save_error)}")
         
+        # 生成二维码图片URL（使用QR码生成服务）
+        qrcode_image_url = f"https://api.qrserver.com/v1/create-qr-code/?size=256x256&data={quote(wechat_qrcode_url)}"
+        
         response_data = {
             'success': True,
-            'qrcode_url': wechat_qrcode_url,
+            'qrcode_url': wechat_qrcode_url,  # 原始企业微信URL
+            'qrcode_image_url': qrcode_image_url,  # 二维码图片URL
             'state': state
         }
         print(f"[DEBUG] 返回数据: {response_data}")

@@ -13,11 +13,11 @@ class Config:
     # 数据库配置 - 默认使用MySQL
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
     
-    # 从环境变量构建数据库URL
-    DB_HOST = os.environ.get('DB_HOST', 'localhost')
-    DB_PORT = os.environ.get('DB_PORT', '3306')
-    DB_USER = os.environ.get('DB_USER', 'root')
-    DB_PASSWORD = os.environ.get('DB_PASSWORD', '')
+    # 从环境变量构建数据库URL - 优先使用环境变量，与.env.development文件保持一致
+    DB_HOST = os.environ.get('DB_HOST', '172.18.0.1')
+    DB_PORT = os.environ.get('DB_PORT', '33060')
+    DB_USER = os.environ.get('DB_USER', 'helloworld_user')
+    DB_PASSWORD = os.environ.get('DB_PASSWORD', 'Helloworld@123')
     DB_NAME = os.environ.get('DB_NAME', 'helloworld_db')
     DB_CHARSET = os.environ.get('DB_CHARSET', 'utf8mb4')
     
@@ -57,11 +57,11 @@ class Config:
 
 # MySQL配置 - 所有环境统一使用此类
 class MySQLConfig(Config):
-    # 从环境变量构建数据库URL
-    DB_HOST = os.environ.get('DB_HOST', 'localhost')
-    DB_PORT = os.environ.get('DB_PORT', '3306')
-    DB_USER = os.environ.get('DB_USER', 'root')
-    DB_PASSWORD = os.environ.get('DB_PASSWORD', '')
+    # 从环境变量构建数据库URL - 优先使用环境变量，与.env.development文件保持一致
+    DB_HOST = os.environ.get('DB_HOST', '172.18.0.1')
+    DB_PORT = os.environ.get('DB_PORT', '33060')
+    DB_USER = os.environ.get('DB_USER', 'helloworld_user')
+    DB_PASSWORD = os.environ.get('DB_PASSWORD', 'Helloworld@123')
     DB_NAME = os.environ.get('DB_NAME', 'helloworld_db')
     DB_CHARSET = os.environ.get('DB_CHARSET', 'utf8mb4')
     

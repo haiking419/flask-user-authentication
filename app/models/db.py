@@ -12,6 +12,10 @@ class User(db.Model):
     username = db.Column(db.String(80), unique=True, nullable=False, index=True)
     password = db.Column(db.String(200), nullable=False)
     email = db.Column(db.String(120), unique=True, nullable=True)
+    wechat_corp_userid = db.Column(db.String(120), unique=True, nullable=True, index=True)  # 企业微信用户ID
+    wechat_corp_name = db.Column(db.String(120), nullable=True)  # 企业微信用户姓名
+    wechat_corp_avatar = db.Column(db.String(500), nullable=True)  # 企业微信头像URL
+    wechat_corp_binded_at = db.Column(db.DateTime, nullable=True)  # 企业微信绑定时间
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 class Verification(db.Model):

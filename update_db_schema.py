@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""更新数据库表结构，添加缺失的登录日志字段"""
+"""更新数据库表结构，添加缺失的企业微信相关字段和登录日志字段"""
 
 import os
 import sys
@@ -22,7 +22,7 @@ DB_NAME = os.environ.get('DB_NAME', 'helloworld_db')
 DATABASE_URL = f"mysql+pymysql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}?charset=utf8mb4"
 
 print("="*60)
-print("更新LoginLog表结构开始")
+print("更新数据库表结构开始")
 print("="*60)
 
 try:
@@ -34,7 +34,39 @@ try:
         trans = connection.begin()
         
         try:
-            print("1. 检查并添加缺失的字段...")
+            # 1. 更新User表，添加企业微信相关字段
+            print("\n1. 更新User表，添加企业微信相关字段...")
+            
+            # 添加wechat_corp_userid字段
+            try:
+                connection.execute(text("ALTER TABLE user ADD COLUMN wechat_corp_userid VARCHAR(120) NULL UNIQUE AFTER email"))
+                print("   ✓ wechat_corp_userid字段添加成功")
+            except Exception as e:
+                print(f"   ℹ wechat_corp_userid字段可能已存在: {str(e)}")
+            
+            # 添加wechat_corp_name字段
+            try:
+                connection.execute(text("ALTER TABLE user ADD COLUMN wechat_corp_name VARCHAR(120) NULL AFTER wechat_corp_userid"))
+                print("   ✓ wechat_corp_name字段添加成功")
+            except Exception as e:
+                print(f"   ℹ wechat_corp_name字段可能已存在: {str(e)}")
+            
+            # 添加wechat_corp_avatar字段
+            try:
+                connection.execute(text("ALTER TABLE user ADD COLUMN wechat_corp_avatar VARCHAR(500) NULL AFTER wechat_corp_name"))
+                print("   ✓ wechat_corp_avatar字段添加成功")
+            except Exception as e:
+                print(f"   ℹ wechat_corp_avatar字段可能已存在: {str(e)}")
+            
+            # 添加wechat_corp_binded_at字段
+            try:
+                connection.execute(text("ALTER TABLE user ADD COLUMN wechat_corp_binded_at DATETIME NULL AFTER wechat_corp_avatar"))
+                print("   ✓ wechat_corp_binded_at字段添加成功")
+            except Exception as e:
+                print(f"   ℹ wechat_corp_binded_at字段可能已存在: {str(e)}")
+            
+            # 2. 更新LoginLog表
+            print("\n2. 更新LoginLog表，添加缺失字段...")
             
             # 添加browser字段
             try:
@@ -83,7 +115,18 @@ try:
             print("\n✓ 所有字段更新操作完成")
             
             # 验证更新后的表结构
-            print("\n2. 验证更新后的表结构...")
+            print("\n3. 验证更新后的表结构...")
+            
+            # 验证User表
+            print("\nUser表结构:")
+            result = connection.execute(text("SHOW COLUMNS FROM user"))
+            columns = result.fetchall()
+            print(f"表中现在有 {len(columns)} 个字段:")
+            for col in columns:
+                print(f"   - {col[0]}: {col[1]}")
+            
+            # 验证LoginLog表
+            print("\nLoginLog表结构:")
             result = connection.execute(text("SHOW COLUMNS FROM login_log"))
             columns = result.fetchall()
             print(f"表中现在有 {len(columns)} 个字段:")

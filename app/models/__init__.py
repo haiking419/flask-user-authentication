@@ -96,10 +96,15 @@ def get_wechat_sessions():
             else:
                 timestamp = session.created_at
             
+            # 创建会话数据，包含基本信息
             session_data = {
-                'timestamp': timestamp
+                'timestamp': timestamp,
+                # 注意：由于数据库模型限制，我们无法直接存储其他字段
+                # 但我们需要确保返回的字典包含必要的键
+                'action': 'login',  # 默认操作类型
+                'ip_address': '',
+                'mode': 'production'  # 默认模式
             }
-            # 如果有其他字段，可以在这里添加
             sessions_dict[session.state] = session_data
         
         # 清理过期会话（超过1小时）
@@ -122,7 +127,7 @@ def get_wechat_sessions():
                 # 删除过期会话
                 WechatSession.query.filter(WechatSession.state.in_(expired_states)).delete(synchronize_session=False)
                 db.session.commit()
-                print(f"成功清理 {len(expired_states)} 个过期微信会话")
+    
                 # 从返回结果中移除
                 for state in expired_states:
                     if state in sessions_dict:
@@ -164,13 +169,15 @@ def save_wechat_sessions(sessions):
                             print(f"转换时间戳失败 - state: {state}, 错误: {e}")
                             # 继续使用默认的created_at
                     
+
+                    
                     db.session.add(session)
                 except Exception as e:
                     print(f"保存微信会话项失败 - state: {state}, 错误: {e}")
             
             # 提交事务
             db.session.commit()
-            print(f"成功保存 {len(sessions)} 个微信会话")
+
         except Exception as e:
             print(f"保存微信会话事务失败: {e}")
             db.session.rollback()

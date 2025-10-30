@@ -142,6 +142,7 @@ def login():
                 db.session.add(login_log)
                 db.session.commit()
             except Exception as e:
+                # 异常处理
                 logger.error(f"保存登录日志失败: {e}")
                 try:
                     db.session.rollback()
@@ -591,7 +592,8 @@ def wechat_corp_login():
         wechat_sessions[state] = {
             'timestamp': time.time(),
             'ip_address': ip_address,
-            'mode': mode
+            'mode': mode,
+            'action': 'login'  # 操作类型：login
         }
         save_wechat_sessions(wechat_sessions)
     except Exception as e:
@@ -654,7 +656,7 @@ def wechat_corp_login():
             <p class="text-gray-600 mb-8">测试环境：点击链接模拟扫码</p>
             
             <div class="flex justify-center mb-8">
-                <a href="{{ qrcode_url }}" class="bg-blue-100 hover:bg-blue-200 text-blue-700 py-3 px-6 rounded-lg transition-colors">
+                <a href="{{ test_info.test_callback_url }}" class="bg-blue-100 hover:bg-blue-200 text-blue-700 py-3 px-6 rounded-lg transition-colors">
                     {{ test_info.test_hint }}
                 </a>
             </div>
@@ -751,11 +753,11 @@ def wechat_corp_login():
             <!-- 二维码区域 -->
             <div class="flex justify-center mb-8">
                 <div class="w-64 h-64 border-2 border-gray-200 rounded-lg bg-white overflow-hidden">
-                    <a href="{{ qrcode_url }}" target="_blank">
-                        <img src="{{ qrcode_url }}" alt="企业微信登录二维码" class="w-full h-full object-contain">
-                    </a>
+                    <!-- 使用QR码生成服务 -->
+                    <img src="https://api.qrserver.com/v1/create-qr-code/?size=256x256&data={{ qrcode_url|urlencode }}" alt="企业微信登录二维码" class="w-full h-full object-contain">
                 </div>
             </div>
+            <p class="text-sm text-gray-500 mt-2">请使用企业微信扫码登录</p>
             
             <!-- 配置检查提示 -->
             <div class="mb-6 p-3 bg-yellow-50 border border-yellow-100 rounded-lg">
@@ -789,6 +791,7 @@ def wechat_corp_login():
             
             if (countdown <= 0) {
                 clearInterval(timer);
+                clearInterval(pollingTimer);
                 countdownElement.textContent = '已过期';
                 countdownElement.classList.remove('text-primary');
                 countdownElement.classList.add('text-red-500');
@@ -797,9 +800,50 @@ def wechat_corp_login():
             }
         }, 1000);
         
+        // 轮询检查扫码状态
+        const pollingTimer = setInterval(() => {
+            fetch(`/check_wechat_scan_status?state={{ state }}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.status === 'scanned') {
+                        // 用户已扫码，显示提示
+                        document.querySelector('.card-shadow').innerHTML = `
+                            <div class="inline-flex items-center justify-center w-20 h-20 bg-green-100 text-green-500 rounded-full mb-6">
+                                <i class="fa fa-check text-4xl"></i>
+                            </div>
+                            <h1 class="text-2xl font-bold text-gray-800 mb-4">已扫码，请确认</h1>
+                            <p class="text-gray-600 mb-8">请在企业微信中点击确认绑定</p>
+                        `;
+                    } else if (data.status === 'confirmed') {
+                        // 用户已确认，跳转到用户中心
+                        clearInterval(pollingTimer);
+                        clearInterval(timer);
+                        window.location.href = '/user_center';
+                    } else if (data.status === 'expired') {
+                        // 二维码已过期
+                        clearInterval(pollingTimer);
+                        clearInterval(timer);
+                        countdownElement.textContent = '已过期';
+                        countdownElement.classList.remove('text-primary');
+                        countdownElement.classList.add('text-red-500');
+                        refreshButton.classList.remove('opacity-50', 'cursor-not-allowed');
+                        refreshButton.disabled = false;
+                    }
+                })
+                .catch(error => {
+                    console.error('检查扫码状态失败:', error);
+                });
+        }, 2000); // 每2秒检查一次
+        
         // 刷新二维码功能
         refreshButton.addEventListener('click', () => {
             window.location.reload();
+        });
+        
+        // 页面卸载时清理定时器
+        window.addEventListener('beforeunload', () => {
+            clearInterval(timer);
+            clearInterval(pollingTimer);
         });
     </script>
 </body>
@@ -808,6 +852,189 @@ def wechat_corp_login():
     except Exception as e:
         logger.error(f"生成企业微信登录URL失败: {e}, IP: {ip_address}")
         return "生成登录二维码失败，请稍后重试", 500
+
+@bp.route('/bind_wechat_corp')
+def bind_wechat_corp():
+    """绑定企业微信入口"""
+    # 检查用户是否已登录
+    if 'username' not in session:
+        return redirect(url_for('auth.login'))
+    
+    ip_address = request.remote_addr
+    mode = request.args.get('mode', 'production')  # 支持测试模式
+    
+    # 生成state参数，用于防止CSRF攻击
+    state = generate_wechat_state()
+    
+    # 保存state到数据库，用于后续验证
+    try:
+        wechat_sessions = get_wechat_sessions()
+        wechat_sessions[state] = {
+            'timestamp': time.time(),
+            'ip_address': ip_address,
+            'mode': mode,
+            'action': 'bind',  # 操作类型：bind
+            'username': session.get('username'),  # 保存当前登录的用户名
+            'scan_status': 'pending'  # 初始扫码状态为pending
+        }
+        save_wechat_sessions(wechat_sessions)
+    except Exception as e:
+        logger.error(f"保存企业微信绑定state失败: {e}, IP: {ip_address}")
+        return "生成绑定二维码失败，请稍后重试", 500
+    
+    logger.info(f"生成企业微信绑定二维码 - state: {state}, 模式: {mode}, IP: {ip_address}")
+    
+    # 测试模式处理
+    if mode == 'test':
+        # 构造测试环境的模拟扫码URL
+        qr_code_url = f"/wechat_callback?state={state}&code=test_corp_code_{int(time.time())}"
+        test_info = {
+            'state': state,
+            'test_mode': True,
+            'test_callback_url': qr_code_url,
+            'test_hint': '测试模式：点击下方链接模拟扫码成功'
+        }
+        logger.info(f"测试模式企业微信绑定 - 生成测试回调链接: {qr_code_url}, IP: {ip_address}")
+        return render_template_string('''<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>绑定企业微信 - Hello World</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdn.jsdelivr.net/npm/font-awesome@4.7.0/css/font-awesome.min.css" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#3b82f6',
+                        secondary: '#10b981',
+                        accent: '#8b5cf6',
+                        wechat_corp: '#0084ff',
+                    },
+                }
+            }
+        }
+    </script>
+    <style type="text/tailwindcss">
+        @layer utilities {
+            .content-auto {
+                content-visibility: auto;
+            }
+            .card-shadow {
+                box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.1);
+            }
+        }
+    </style>
+</head>
+<body class="bg-gradient-to-br from-blue-50 to-indigo-50 min-h-screen flex items-center justify-center p-4">
+    <div class="w-full max-w-md">
+        <div class="bg-white rounded-2xl p-8 card-shadow text-center">
+            <div class="inline-flex items-center justify-center w-20 h-20 bg-wechat_corp/10 text-wechat_corp rounded-full mb-6">
+                <i class="fa fa-building text-4xl"></i>
+            </div>
+            <h1 class="text-2xl font-bold text-gray-800 mb-4">绑定企业微信（测试模式）</h1>
+            <p class="text-gray-600 mb-8">测试环境：点击链接模拟扫码</p>
+            
+            <div class="flex justify-center mb-8">
+                <a href="{{ qrcode_url }}" class="bg-blue-100 hover:bg-blue-200 text-blue-700 py-3 px-6 rounded-lg transition-colors">
+                    {{ test_info.test_hint }}
+                </a>
+            </div>
+            
+            <div class="mt-6 p-4 bg-blue-50 border border-blue-100 rounded-lg">
+                <p class="text-blue-700 text-sm">
+                    <i class="fa fa-info-circle mr-2"></i>
+                    测试状态: {{ test_info.state }}
+                </p>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
+    ''', state=state, qrcode_url=qr_code_url, test_info=test_info)
+    
+    # 生产环境：构造企业微信扫码绑定URL并直接重定向
+    try:
+        # 直接打印到标准输出，确保能看到
+        import sys
+        print(f"[调试] 企业微信配置参数 - CORP_ID: {WECHAT_CORP_ID}, AGENT_ID: {WECHAT_AGENT_ID}, REDIRECT_URI: {WECHAT_REDIRECT_URI}", file=sys.stderr)
+        
+        # 对redirect_uri进行完整的URL编码（包括所有特殊字符）
+        import urllib.parse
+        encoded_redirect_uri = urllib.parse.quote(WECHAT_REDIRECT_URI, safe='')
+        print(f"[调试] 编码后的redirect_uri: {encoded_redirect_uri}", file=sys.stderr)
+        
+        # 验证必要的配置参数
+        if not WECHAT_CORP_ID or WECHAT_CORP_ID == 'wx1234567890abcdef':
+            logger.warning(f"企业微信CORP_ID未配置或使用默认值 - IP: {ip_address}")
+        if not WECHAT_AGENT_ID or WECHAT_AGENT_ID == '1000001':
+            logger.warning(f"企业微信AGENT_ID未配置或使用默认值 - IP: {ip_address}")
+        if not WECHAT_APP_SECRET or WECHAT_APP_SECRET == 'abcdef1234567890abcdef1234567890':
+            logger.warning(f"企业微信APP_SECRET未配置或使用默认值 - IP: {ip_address}")
+        if not WECHAT_REDIRECT_URI or WECHAT_REDIRECT_URI == 'http://localhost:5000/wechat_callback':
+            logger.warning(f"企业微信REDIRECT_URI未配置或使用默认值 - IP: {ip_address}")
+        
+        # 确保agentid是字符串类型
+        agent_id_str = str(WECHAT_AGENT_ID)
+        print(f"[调试] 转换后的agentid: {agent_id_str}", file=sys.stderr)
+        
+        # 使用官方更新的API格式，将corpid改为appid，直接重定向到企业微信官方页面
+        qr_connect_url = "https://open.work.weixin.qq.com/wwopen/sso/qrConnect?appid={}&agentid={}&redirect_uri={}&state={}".format(
+            str(WECHAT_CORP_ID), str(WECHAT_AGENT_ID), encoded_redirect_uri, state
+        )
+        
+        print(f"[调试] 完整生成的URL: {qr_connect_url}", file=sys.stderr)
+        logger.info(f"生产环境企业微信绑定URL生成成功 - state: {state}, URL: {qr_connect_url[:100]}..., IP: {ip_address}")
+        
+        # 直接重定向到企业微信官方页面，而不是显示二维码图片
+        return redirect(qr_connect_url)
+    except Exception as e:
+        logger.error(f"生成企业微信绑定URL失败: {e}, IP: {ip_address}")
+        return "生成绑定二维码失败，请稍后重试", 500
+
+@bp.route('/check_wechat_scan_status')
+def check_wechat_scan_status():
+    """检查企业微信扫码状态"""
+    state = request.args.get('state')
+    ip_address = request.remote_addr
+    
+    try:
+        # 获取微信会话信息
+        wechat_sessions = get_wechat_sessions()
+        
+        # 检查state是否存在
+        if state not in wechat_sessions:
+            return jsonify({'status': 'invalid', 'message': '二维码不存在或已失效'}), 404
+        
+        session_info = wechat_sessions[state]
+        
+        # 检查扫码状态
+        scan_status = session_info.get('scan_status', 'pending')
+        
+        # 如果已经确认，优先返回confirmed状态，不检查过期
+        if scan_status == 'confirmed':
+            logger.info(f"检测到已确认状态 - state: {state}, IP: {ip_address}")
+            # 不立即清理state，让前端有足够时间收到状态并完成跳转
+            # 清理会在前端跳转后自动处理
+            return jsonify({'status': scan_status, 'message': '成功'}), 200
+        
+        # 检查二维码是否过期（延长有效期至5分钟）
+        if time.time() - session_info.get('timestamp', 0) > 300:  # 5分钟
+            # 从会话中删除过期的state
+            try:
+                del wechat_sessions[state]
+                save_wechat_sessions(wechat_sessions)
+            except:
+                pass
+            return jsonify({'status': 'expired', 'message': '二维码已过期'}), 200
+        
+        return jsonify({'status': scan_status, 'message': '成功'}), 200
+        
+    except Exception as e:
+        logger.error(f"检查企业微信扫码状态时发生错误: {e}, IP: {ip_address}")
+        return jsonify({'status': 'error', 'message': '服务器内部错误'}), 500
 
 @bp.route('/wechat_callback')
 def wechat_callback():
@@ -884,6 +1111,9 @@ def wechat_callback():
                 del wechat_sessions[state]
                 save_wechat_sessions(wechat_sessions)
                 return "登录已过期，请重新扫码", 400
+            
+            # 检查操作类型（登录或绑定）
+            action = wechat_sessions[state].get('action', 'login')
         except (KeyError, ValueError, TypeError) as e:
             logger.error(f"检查微信会话过期时间时发生错误: {e}, IP: {ip_address}")
             # 如果时间戳检查失败，视为会话无效
@@ -895,21 +1125,79 @@ def wechat_callback():
     
     # 4. 在开发/测试环境下的模拟登录逻辑
     if code.startswith('test_corp_code_'):
-        logger.info(f"测试环境企业微信登录 - state: {state}, IP: {ip_address}")
+        logger.info(f"测试环境企业微信处理 - state: {state}, action: {action}, IP: {ip_address}")
         
-        # 生成测试用户名
-        username = f"wx_corp_test_user_{int(time.time()) % 1000}"
+        # 确保action有默认值
+        if not action:
+            action = 'login'
+            logger.warning(f"测试环境自动设置action为login - IP: {ip_address}")
         
-        # 将用户信息存储到会话中
-        session['username'] = username
-        session['login_type'] = 'wechat_corp'  # 记录登录方式
-        session.permanent = True  # 设置会话持久化
+        # 设置mode为test
+        mode = 'test'
+        
+        # 生成测试用户ID
+        test_userid = f"test_user_{int(time.time()) % 1000}"
+        
+        # 更新扫码状态为已确认
+        try:
+            wechat_sessions[state]['scan_status'] = 'confirmed'
+            save_wechat_sessions(wechat_sessions)
+        except:
+            pass
+            
+        # 处理登录操作
+        if action == 'login':
+            # 生成测试用户名
+            username = f"wx_corp_test_user_{test_userid}"
+            
+            # 将用户信息存储到会话中
+            session['username'] = username
+            session['login_type'] = 'wechat_corp'  # 记录登录方式
+            session['user_info'] = {
+                'userid': test_userid,
+                'name': '测试企业微信用户',
+                'avatar': ''
+            }
+            session.permanent = True  # 设置会话持久化
+        
+        # 处理绑定操作
+        elif action == 'bind':
+            if 'username' not in session:
+                logger.warning(f"绑定操作需要先登录 - IP: {ip_address}")
+                return redirect(url_for('auth.login'))
+            
+            current_username = session['username']
+            username = current_username  # 确保username变量在所有路径中都有定义
+            logger.info(f"测试环境企业微信绑定 - 用户名: {current_username}, 微信用户ID: {test_userid}, IP: {ip_address}")
+            
+            # 在数据库中更新用户的企业微信绑定信息
+            try:
+                user = User.query.filter_by(username=current_username).first()
+                if user:
+                    user.wechat_corp_userid = test_userid
+                    user.wechat_corp_bind_time = datetime.now()
+                    # 更新会话中的用户信息
+                    session['user_info'] = {
+                        'userid': test_userid,
+                        'name': '测试企业微信用户',
+                        'avatar': ''
+                    }
+                    db.session.commit()
+                    logger.info(f"测试环境企业微信绑定成功 - 用户名: {current_username}, IP: {ip_address}")
+            except Exception as e:
+                logger.error(f"测试环境企业微信绑定失败: {e}, IP: {ip_address}")
+                try:
+                    db.session.rollback()
+                except:
+                    pass
         
         # 记录登录日志
         try:
             # 构建请求参数（过滤敏感信息）
             request_params = {
                 'state': state,
+                'action': action,
+                'mode': mode,
                 'has_code': bool(code),
                 'user_agent': user_agent[:200] if user_agent else '',
                 'browser': browser,
@@ -945,11 +1233,29 @@ def wechat_callback():
         except:
             pass
         
-        # 跳转到用户中心
-        return redirect(url_for('auth.user_center'))
+        # 10. 跳转到用户中心，并根据操作类型设置成功消息
+        if action == 'login':
+            # 保存会话数据
+            session.modified = True
+            return redirect(url_for('auth.user_center'))
+        elif action == 'bind':
+            # 设置成功消息并确保会话被保存
+            session['bind_success'] = True
+            session.modified = True
+            return redirect(url_for('auth.user_center'))
+        else:
+            # 处理未知操作类型
+            return redirect(url_for('auth.user_center'))
     
     # 5. 生产环境：调用企业微信API获取用户信息
     try:
+        # 确保action有默认值
+        if not action:
+            action = 'login'
+            
+        # 设置mode为production
+        mode = 'production'
+        
         # 5.1 获取access_token
         access_token_url = f"https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid={WECHAT_CORP_ID}&corpsecret={WECHAT_APP_SECRET}"
         logger.info(f"调用企业微信API获取access_token - IP: {ip_address}")
@@ -989,65 +1295,125 @@ def wechat_callback():
             logger.error(f"获取企业微信用户详细信息失败: {user_detail_data}, IP: {ip_address}")
             return "登录失败，请稍后重试", 500
         
-        # 6. 处理用户信息，创建或更新用户
-        # 生成用户名（可以根据需要调整规则）
-        username = f"wx_corp_{userid}"
+        # 6. 根据操作类型处理
+        logger.info(f"企业微信处理 - action: {action}, userid: {userid}, IP: {ip_address}")
         
-        # 这里可以根据需要查询数据库，创建或更新用户信息
-        # 为了演示，我们直接使用微信返回的用户信息
+        # 更新扫码状态为已确认
+        try:
+            wechat_sessions[state]['scan_status'] = 'confirmed'
+            save_wechat_sessions(wechat_sessions)
+        except:
+            pass
+            
+        # 处理登录操作
+        if action == 'login':
+            # 生成用户名（可以根据需要调整规则）
+            username = f"wx_corp_{userid}"
+            
+            # 这里可以根据需要查询数据库，创建或更新用户信息
+            # 为了演示，我们直接使用微信返回的用户信息
+            
+            # 将用户信息存储到会话中
+            session['username'] = username
+            session['login_type'] = 'wechat_corp'  # 记录登录方式
+            session['user_info'] = {
+                'userid': userid,
+                'name': user_detail_data.get('name', '企业微信用户'),
+                'avatar': user_detail_data.get('avatar', '')
+            }  # 存储用户信息
+            session.permanent = True  # 设置会话持久化
         
-        # 7. 将用户信息存储到会话中
-        session['username'] = username
-        session['login_type'] = 'wechat_corp'  # 记录登录方式
-        session['user_info'] = {
-            'userid': userid,
-            'name': user_detail_data.get('name', '企业微信用户'),
-            'avatar': user_detail_data.get('avatar', '')
-        }  # 存储用户信息
-        session.permanent = True  # 设置会话持久化
+        # 处理绑定操作
+        elif action == 'bind':
+            if 'username' not in session:
+                logger.warning(f"绑定操作需要先登录 - IP: {ip_address}")
+                return redirect(url_for('auth.login'))
+            
+            current_username = session['username']
+            logger.info(f"企业微信绑定 - 用户名: {current_username}, 微信用户ID: {userid}, IP: {ip_address}")
+            
+            # 在数据库中更新用户的企业微信绑定信息
+            try:
+                user = User.query.filter_by(username=current_username).first()
+                if user:
+                    user.wechat_corp_userid = userid
+                    user.wechat_corp_bind_time = datetime.now()
+                    # 更新用户信息
+                    session['user_info'] = {
+                        'userid': userid,
+                        'name': user_detail_data.get('name', '企业微信用户'),
+                        'avatar': user_detail_data.get('avatar', '')
+                    }
+                    db.session.commit()
+                    logger.info(f"企业微信绑定成功 - 用户名: {current_username}, IP: {ip_address}")
+            except Exception as e:
+                logger.error(f"企业微信绑定失败: {e}, IP: {ip_address}")
+                try:
+                    db.session.rollback()
+                except:
+                    pass
         
-        # 8. 记录登录日志
+        # 8. 记录日志（根据操作类型）
         try:
             # 构建请求参数（过滤敏感信息）
             request_params = {
                 'state': state,
+                'action': action,
                 'has_code': bool(code),
                 'user_agent': user_agent[:200] if user_agent else '',
                 'browser': browser,
                 'platform': platform
             }
             
-            login_log = LoginLog(
-                username=username,
-                ip_address=ip_address,
-                login_type='wechat_corp',
-                success=True,
-                browser=browser,
-                user_agent=user_agent[:255] if user_agent else '',
-                platform=platform,
-                request_params=json.dumps(request_params, ensure_ascii=False),
-                response_time=time.time() - session_timestamp if 'timestamp' in wechat_sessions.get(state, {}) else 0
-            )
-            db.session.add(login_log)
-            db.session.commit()
+            if action == 'login':
+                login_log = LoginLog(
+                    username=username,
+                    ip_address=ip_address,
+                    login_type='wechat_corp',
+                    success=True,
+                    browser=browser,
+                    user_agent=user_agent[:255] if user_agent else '',
+                    platform=platform,
+                    request_params=json.dumps(request_params, ensure_ascii=False),
+                    response_time=time.time() - session_timestamp if 'timestamp' in wechat_sessions.get(state, {}) else 0
+                )
+                db.session.add(login_log)
+                db.session.commit()
+                logger.info(f"企业微信登录成功 - 用户名: {username}, userid: {userid}, IP: {ip_address}")
+            elif action == 'bind':
+                # 记录绑定日志
+                logger.info(f"企业微信绑定成功 - 用户名: {current_username}, userid: {userid}, IP: {ip_address}")
         except Exception as e:
-            logger.error(f"保存企业微信登录日志失败: {e}")
+            logger.error(f"保存企业微信操作日志失败: {e}")
             try:
                 db.session.rollback()
             except:
                 pass
         
-        logger.info(f"企业微信登录成功 - 用户名: {username}, userid: {userid}, IP: {ip_address}")
-        
-        # 9. 清理已使用的state
+        # 9. 清理已使用的state，但对于绑定操作，我们需要保留state以便轮询检测
         try:
-            del wechat_sessions[state]
-            save_wechat_sessions(wechat_sessions)
+            # 只有登录操作才立即清理state，绑定操作让轮询检测到状态后再清理
+            if action == 'login':
+                del wechat_sessions[state]
+                save_wechat_sessions(wechat_sessions)
         except:
             pass
         
-        # 10. 跳转到用户中心
-        return redirect(url_for('auth.user_center'))
+        # 10. 跳转到用户中心，并根据操作类型设置成功消息
+        if action == 'login':
+            # 保存会话数据
+            session.modified = True
+            return redirect(url_for('auth.user_center'))
+        elif action == 'bind':
+            # 设置成功消息并确保会话被保存
+            session['bind_success'] = True
+            session.modified = True
+
+            return redirect(url_for('auth.user_center'))
+        else:
+            # 处理未知操作类型
+            logger.warning(f"未知的操作类型: {action}, 默认为登录处理 - IP: {ip_address}")
+            return redirect(url_for('auth.user_center'))
         
     except requests.exceptions.RequestException as e:
         logger.error(f"调用企业微信API时发生网络错误: {e}, IP: {ip_address}")
@@ -1065,6 +1431,18 @@ def user_center():
     username = session.get('username')
     login_type = session.get('login_type', 'default')
     user_info = session.get('user_info', {})
+    
+    # 检查是否已绑定企业微信
+    wechat_binded = False
+    
+    # 获取绑定成功消息（如果有）
+    bind_success = session.pop('bind_success', False)
+    try:
+        user = User.query.filter_by(username=username).first()
+        if user:
+            wechat_binded = bool(user.wechat_corp_userid)
+    except Exception as e:
+        logger.error(f"检查企业微信绑定状态失败: {e}")
     
     # 查询用户的登录历史记录
     login_history = []
@@ -1128,6 +1506,18 @@ def user_center():
         </div>
     </header>
 
+    <!-- 绑定成功提示 -->
+    {% if bind_success %}
+    <div class="container mx-auto px-4 py-3">
+        <div class="bg-green-50 border-l-4 border-green-400 text-green-700 p-4 rounded">
+            <div class="flex items-center">
+                <i class="fa fa-check-circle text-xl mr-2"></i>
+                <p class="font-medium">企业微信绑定成功！</p>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
     <!-- 主要内容 -->
     <main class="flex-grow container mx-auto px-4 py-8">
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -1189,12 +1579,23 @@ def user_center():
                     <i class="fa fa-shield text-red-500 mr-2"></i> 账户安全
                 </h2>
                 <div class="space-y-4">
-                    <button class="w-full bg-primary hover:bg-primary/90 text-white py-2 rounded-md transition-colors flex justify-center items-center">
+                    <a href="{{ url_for('auth.change_password') }}" class="w-full bg-primary hover:bg-primary/90 text-white py-2 rounded-md transition-colors flex justify-center items-center btn-hover">
                         <i class="fa fa-key mr-2"></i> 修改密码
-                    </button>
+                    </a>
                     <div class="text-sm text-gray-500">
                         <p><i class="fa fa-info-circle mr-1"></i> 建议定期更换密码以保障账户安全</p>
                         <p class="mt-2"><i class="fa fa-check-circle text-green-500 mr-1"></i> 您的账户已通过身份验证</p>
+                    </div>
+                    <div class="pt-4 border-t border-gray-100">
+                        {% if not wechat_binded %}
+                        <a href="{{ url_for('auth.bind_wechat_corp') }}" class="w-full bg-secondary hover:bg-secondary/90 text-white py-2 rounded-md transition-colors flex justify-center items-center btn-hover">
+                            <i class="fa fa-weixin mr-2"></i> 绑定企业微信
+                        </a>
+                        {% else %}
+                        <button class="w-full bg-gray-100 text-gray-500 py-2 rounded-md transition-colors flex justify-center items-center">
+                            <i class="fa fa-check-circle text-green-500 mr-2"></i> 已绑定企业微信
+                        </button>
+                        {% endif %}
                     </div>
                 </div>
             </div>
@@ -1262,7 +1663,203 @@ def user_center():
     </footer>
 </body>
 </html>
-''', username=username, login_type=login_type, user_info=user_info, login_history=login_history, datetime=datetime, timezone=timezone, format_datetime_with_timezone=format_datetime_with_timezone, request=request)
+''', username=username, login_type=login_type, user_info=user_info, login_history=login_history, wechat_binded=wechat_binded, bind_success=bind_success, datetime=datetime, timezone=timezone, format_datetime_with_timezone=format_datetime_with_timezone, request=request)
+
+@bp.route('/change_password', methods=['GET', 'POST'])
+def change_password():
+    """修改密码页面"""
+    if 'username' not in session:
+        return redirect(url_for('auth.login'))
+    
+    username = session.get('username')
+    error_message = None
+    success_message = None
+    
+    if request.method == 'POST':
+        old_password = request.form.get('old_password')
+        new_password = request.form.get('new_password')
+        confirm_password = request.form.get('confirm_password')
+        
+        # 验证密码
+        if not old_password or not new_password or not confirm_password:
+            error_message = '请填写所有密码字段'
+        elif new_password != confirm_password:
+            error_message = '两次输入的新密码不一致'
+        elif len(new_password) < 6:
+            error_message = '新密码长度至少为6位'
+        else:
+            try:
+                # 获取用户
+                user = User.query.filter_by(username=username).first()
+                if not user:
+                    error_message = '用户不存在'
+                else:
+                    # 验证旧密码
+                    old_password_hash = hashlib.sha256(old_password.encode()).hexdigest()
+                    if user.password != old_password_hash:
+                        error_message = '原密码错误'
+                    else:
+                        # 更新密码
+                        new_password_hash = hashlib.sha256(new_password.encode()).hexdigest()
+                        user.password = new_password_hash
+                        db.session.commit()
+                        success_message = '密码修改成功'
+                        logger.info(f"用户 {username} 修改密码成功")
+            except Exception as e:
+                logger.error(f"用户 {username} 修改密码时发生错误: {e}")
+                db.session.rollback()
+                error_message = '修改密码失败，请稍后重试'
+    
+    # 渲染修改密码页面
+    return render_template_string('''
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>修改密码 - Hello World</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdn.jsdelivr.net/npm/font-awesome@4.7.0/css/font-awesome.min.css" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#3b82f6',
+                        secondary: '#10b981',
+                        accent: '#8b5cf6',
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'system-ui', 'sans-serif'],
+                    },
+                }
+            }
+        }
+    </script>
+    <style type="text/tailwindcss">
+        @layer utilities {
+            .content-auto {
+                content-visibility: auto;
+            }
+            .card-shadow {
+                box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.1);
+            }
+            .input-focus {
+                @apply focus:ring-2 focus:ring-primary/50 focus:border-primary;
+            }
+            .btn-hover {
+                @apply transition-all duration-300 transform hover:scale-[1.02] active:scale-[0.98];
+            }
+        }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen flex flex-col">
+    <!-- 顶部导航栏 -->
+    <header class="bg-white shadow-sm">
+        <div class="container mx-auto px-4 py-3 flex justify-between items-center">
+            <div class="flex items-center space-x-2">
+                <i class="fa fa-user-circle text-primary text-2xl"></i>
+                <h1 class="text-xl font-bold text-gray-800">修改密码</h1>
+            </div>
+            <div class="flex items-center space-x-4">
+                <a href="{{ url_for('auth.user_center') }}" class="bg-gray-200 hover:bg-gray-300 text-gray-800 px-4 py-2 rounded-md transition-colors">
+                    <i class="fa fa-arrow-left mr-1"></i> 返回
+                </a>
+            </div>
+        </div>
+    </header>
+
+    <!-- 主要内容 -->
+    <main class="flex-grow container mx-auto px-4 py-8 flex justify-center items-center">
+        <div class="w-full max-w-md bg-white rounded-xl p-8 card-shadow">
+            <h2 class="text-xl font-semibold mb-6 text-center text-gray-800 flex items-center justify-center">
+                <i class="fa fa-key text-primary mr-2"></i> 账户密码修改
+            </h2>
+            
+            {% if error_message %}
+            <div class="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg">
+                <p class="text-red-600 text-sm flex items-center">
+                    <i class="fa fa-exclamation-circle mr-2"></i>
+                    {{ error_message }}
+                </p>
+            </div>
+            {% endif %}
+            
+            {% if success_message %}
+            <div class="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg">
+                <p class="text-green-600 text-sm flex items-center">
+                    <i class="fa fa-check-circle mr-2"></i>
+                    {{ success_message }}
+                </p>
+            </div>
+            {% endif %}
+            
+            <form method="post" class="space-y-4">
+                <div>
+                    <label for="old_password" class="block text-sm font-medium text-gray-700 mb-1">原密码</label>
+                    <div class="relative">
+                        <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400">
+                            <i class="fa fa-lock"></i>
+                        </div>
+                        <input 
+                            type="password" 
+                            id="old_password" 
+                            name="old_password" 
+                            required
+                            class="w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg shadow-sm focus:outline-none input-focus transition duration-200"
+                            placeholder="请输入原密码"
+                        >
+                    </div>
+                </div>
+                
+                <div>
+                    <label for="new_password" class="block text-sm font-medium text-gray-700 mb-1">新密码</label>
+                    <div class="relative">
+                        <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400">
+                            <i class="fa fa-key"></i>
+                        </div>
+                        <input 
+                            type="password" 
+                            id="new_password" 
+                            name="new_password" 
+                            required
+                            class="w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg shadow-sm focus:outline-none input-focus transition duration-200"
+                            placeholder="请输入新密码（至少6位）"
+                        >
+                    </div>
+                </div>
+                
+                <div>
+                    <label for="confirm_password" class="block text-sm font-medium text-gray-700 mb-1">确认新密码</label>
+                    <div class="relative">
+                        <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400">
+                            <i class="fa fa-check-square-o"></i>
+                        </div>
+                        <input 
+                            type="password" 
+                            id="confirm_password" 
+                            name="confirm_password" 
+                            required
+                            class="w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg shadow-sm focus:outline-none input-focus transition duration-200"
+                            placeholder="请再次输入新密码"
+                        >
+                    </div>
+                </div>
+                
+                <button 
+                    type="submit" 
+                    class="w-full bg-primary hover:bg-primary/90 text-white font-medium py-3 px-4 rounded-lg btn-hover flex items-center justify-center"
+                >
+                    <i class="fa fa-save mr-2"></i> 保存修改
+                </button>
+            </form>
+        </div>
+    </main>
+</body>
+</html>
+''', username=username, error_message=error_message, success_message=success_message)
+
+
 
 @bp.route('/logout')
 def logout():

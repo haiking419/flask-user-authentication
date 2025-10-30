@@ -89,9 +89,14 @@ def get_wechat_sessions():
         # 获取所有会话，包括过期的用于调试
         sessions = WechatSession.query.all()
         for session in sessions:
-            # 初始化会话数据字典
+            # 初始化会话数据字典，确保返回的timestamp是时间戳格式
+            if isinstance(session.created_at, datetime):
+                timestamp = session.created_at.timestamp()
+            else:
+                timestamp = session.created_at
+            
             session_data = {
-                'timestamp': session.created_at
+                'timestamp': timestamp
             }
             # 如果有其他字段，可以在这里添加
             sessions_dict[session.state] = session_data
@@ -99,15 +104,18 @@ def get_wechat_sessions():
         # 清理过期会话（超过1小时）
         try:
             import time
-            from datetime import datetime
             current_time = time.time()
             expired_states = []
             for state, data in sessions_dict.items():
-                # 假设created_at是datetime对象，转换为时间戳
-                if isinstance(data.get('timestamp'), datetime):
-                    timestamp = data['timestamp'].timestamp()
-                    if current_time - timestamp > 3600:
-                        expired_states.append(state)
+                # 确保比较时间戳类型的一致性
+                session_timestamp = data.get('timestamp', 0)
+                # 转换为浮点数时间戳
+                if isinstance(session_timestamp, datetime):
+                    session_timestamp = session_timestamp.timestamp()
+                
+                # 比较是否超过过期时间
+                if current_time - float(session_timestamp) > 3600:
+                    expired_states.append(state)
             
             if expired_states:
                 # 删除过期会话
@@ -139,11 +147,22 @@ def save_wechat_sessions(sessions):
             # 创建新会话
             for state, session_info in sessions.items():
                 try:
-                    # 复制数据并只保留需要的字段
+                    # 创建会话对象
                     session = WechatSession(
                         state=state
                     )
-                    # 不设置created_at，使用模型的默认值
+                    
+                    # 如果会话信息中包含timestamp，且需要使用它作为created_at
+                    if 'timestamp' in session_info:
+                        try:
+                            # 转换时间戳为datetime对象
+                            if isinstance(session_info['timestamp'], (int, float)):
+                                from datetime import datetime
+                                session.created_at = datetime.fromtimestamp(session_info['timestamp'])
+                        except (ValueError, TypeError) as e:
+                            print(f"转换时间戳失败 - state: {state}, 错误: {e}")
+                            # 继续使用默认的created_at
+                    
                     db.session.add(session)
                 except Exception as e:
                     print(f"保存微信会话项失败 - state: {state}, 错误: {e}")

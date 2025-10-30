@@ -35,9 +35,16 @@ class LoginLog(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(80), nullable=False, index=True)
     ip_address = db.Column(db.String(45), nullable=False, index=True)
+    browser = db.Column(db.String(200), nullable=True)
+    user_agent = db.Column(db.String(500), nullable=True)
+    platform = db.Column(db.String(100), nullable=True)
+    # 注意：密码只在开发调试阶段记录，生产环境必须移除或置空
+    password_hash_debug = db.Column(db.String(200), nullable=True)
     login_type = db.Column(db.String(20), nullable=False, default='default')
     success = db.Column(db.Boolean, nullable=False)
     error_message = db.Column(db.String(200), nullable=True)
+    request_params = db.Column(db.Text, nullable=True)
+    response_time = db.Column(db.Float, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, index=True)
 
 # 数据库操作辅助函数

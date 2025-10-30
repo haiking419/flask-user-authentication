@@ -4,8 +4,11 @@ import time
 import requests
 import logging
 import re
+import json
+from urllib.parse import quote
 from datetime import datetime, timezone
-from app.models import get_users, save_users, get_verifications, save_verifications, get_wechat_sessions, save_wechat_sessions, LoginLog, db, Verification
+from app.utils.time_utils import format_datetime_with_timezone, format_datetime_for_frontend
+from app.models import get_users, save_users, get_verifications, save_verifications, get_wechat_sessions, save_wechat_sessions, User, LoginLog, db, Verification
 from app.utils import generate_verification_code, generate_wechat_state, send_email, verify_code, generate_captcha
 
 # 导入配置管理器
@@ -36,7 +39,7 @@ bp = Blueprint('auth', __name__)
 def index():
     """首页"""
     if 'username' in session:
-        return f"欢迎，{session['username']}！<a href='/logout'>退出登录</a>"
+        return redirect(url_for('auth.user_center'))
     return redirect(url_for('auth.login'))
 
 @bp.route('/captcha')
@@ -63,12 +66,49 @@ def login():
     error_message = None
     
     if request.method == 'POST':
+        # 记录请求开始时间
+        start_time = time.time()
+        
+        # 提取用户代理信息
+        user_agent = request.headers.get('User-Agent', 'Unknown')
+        
+        # 简单解析用户代理
+        browser = 'Unknown'
+        platform = 'Unknown'
+        
+        # 尝试识别浏览器
+        if 'Chrome' in user_agent:
+            browser = 'Chrome'
+        elif 'Firefox' in user_agent:
+            browser = 'Firefox'
+        elif 'Safari' in user_agent and 'Chrome' not in user_agent:
+            browser = 'Safari'
+        elif 'Edge' in user_agent:
+            browser = 'Edge'
+        elif 'MSIE' in user_agent or 'Trident/' in user_agent:
+            browser = 'Internet Explorer'
+        
+        # 尝试识别平台
+        if 'Windows' in user_agent:
+            platform = 'Windows'
+        elif 'Macintosh' in user_agent:
+            platform = 'MacOS'
+        elif 'Linux' in user_agent:
+            platform = 'Linux'
+        elif 'iPhone' in user_agent:
+            platform = 'iOS'
+        elif 'Android' in user_agent:
+            platform = 'Android'
+        
         username = request.form['username']
         password = request.form['password']
-        # 注意：不要记录密码
         captcha_input = request.form.get('captcha', '').upper()
         
-        logger.info(f"登录尝试 - 用户名: {username}, IP: {request.remote_addr}")
+        # 开发调试阶段记录详细信息
+        if not IS_PRODUCTION:
+            logger.info(f"[调试] 登录尝试 - 用户名: {username}, IP: {request.remote_addr}, 浏览器: {browser}, 平台: {platform}, User-Agent: {user_agent}")
+        else:
+            logger.info(f"登录尝试 - 用户名: {username}, IP: {request.remote_addr}")
         
         # 验证验证码
         if 'captcha' not in session or captcha_input != session.get('captcha', ''):
@@ -77,13 +117,28 @@ def login():
             
             # 保存登录失败日志到数据库
             try:
+                response_time = time.time() - start_time
+                # 构建请求参数信息（过滤掉敏感字段）
+                request_params = {k: v for k, v in request.form.items() if k != 'password'}
+                
                 login_log = LoginLog(
                     username=username,
                     ip_address=request.remote_addr,
+                    browser=browser,
+                    user_agent=user_agent,
+                    platform=platform,
                     login_type='default',
                     success=False,
-                    error_message='验证码错误'
+                    error_message='验证码错误',
+                    request_params=str(request_params),
+                    response_time=response_time
                 )
+                
+                # 开发调试阶段记录密码哈希
+                if not IS_PRODUCTION and password:
+                    input_hash = hashlib.sha256(password.encode()).hexdigest()
+                    login_log.password_hash_debug = input_hash
+                
                 db.session.add(login_log)
                 db.session.commit()
             except Exception as e:
@@ -98,68 +153,84 @@ def login():
             # 清除会话中的验证码（无论登录成功与否）
             session.pop('captcha', None)
             
-            # 获取用户数据
-            users = get_users()
-            
-            # 验证用户凭据
-            if isinstance(users, dict) and username in users:
-                user = users[username]
-                # 检查密码是否正确
-                if user.get('password') == hashlib.sha256(password.encode()).hexdigest():
-                    session['username'] = username
-                    session['login_type'] = 'default'
-                    logger.info(f"登录成功 - 用户名: {username}, IP: {request.remote_addr}")
-                    
-                    # 保存登录成功日志到数据库
-                    try:
-                        login_log = LoginLog(
-                            username=username,
-                            ip_address=request.remote_addr,
-                            login_type='default',
-                            success=True
-                        )
-                        db.session.add(login_log)
-                        db.session.commit()
-                    except Exception as e:
-                        logger.error(f"保存登录日志失败: {e}")
+            try:
+                # 计算输入密码的哈希值
+                input_hash = hashlib.sha256(password.encode()).hexdigest()
+                logger.info(f"输入密码哈希长度: {len(input_hash)}, 前10字符: {input_hash[:10]}")
+                
+                # 从数据库查询用户（MySQL是唯一数据库）
+                user = User.query.filter_by(username=username).first()
+                logger.info(f"数据库查询用户: {username}, 结果: {user is not None}")
+                
+                if user:
+                    logger.info(f"用户在数据库中存在，密码哈希长度: {len(user.password)}")
+                    # 验证用户凭据
+                    if user.password == input_hash:
+                        # 认证成功
+                        session['username'] = username
+                        session['login_type'] = 'default'
+                        logger.info(f"登录成功 - 用户名: {username}, IP: {request.remote_addr}")
+                        
+                        # 保存登录成功日志到数据库
                         try:
-                            db.session.rollback()
-                        except:
-                            pass
-                    
-                    return redirect('/')
-                else:
-                    logger.warning(f"登录失败 - 密码错误: {username}, IP: {request.remote_addr}")
-                    
-                    # 保存登录失败日志到数据库
-                    try:
-                        login_log = LoginLog(
-                            username=username,
-                            ip_address=request.remote_addr,
-                            login_type='default',
-                            success=False,
-                            error_message='密码错误'
-                        )
-                        db.session.add(login_log)
-                        db.session.commit()
-                    except Exception as e:
-                        logger.error(f"保存登录日志失败: {e}")
-                        try:
-                            db.session.rollback()
-                        except:
-                            pass
-            else:
-                logger.warning(f"登录失败 - 用户不存在: {username}, IP: {request.remote_addr}")
+                            response_time = time.time() - start_time
+                            # 构建请求参数信息（过滤掉敏感字段）
+                            request_params = {k: v for k, v in request.form.items() if k != 'password'}
+                            
+                            login_log = LoginLog(
+                                username=username,
+                                ip_address=request.remote_addr,
+                                browser=browser,
+                                user_agent=user_agent,
+                                platform=platform,
+                                login_type='default',
+                                success=True,
+                                request_params=str(request_params),
+                                response_time=response_time
+                            )
+                            
+                            # 开发调试阶段记录密码哈希
+                            if not IS_PRODUCTION:
+                                login_log.password_hash_debug = input_hash
+                            
+                            db.session.add(login_log)
+                            db.session.commit()
+                        except Exception as e:
+                            logger.error(f"保存登录日志失败: {e}")
+                            try:
+                                db.session.rollback()
+                            except:
+                                pass
+                        
+                        return redirect(url_for('auth.user_center'))
+
+                # 处理登录失败情况
+                error_type = '密码错误' if user else '用户不存在'
+                logger.warning(f"登录失败 - {error_type}: {username}, IP: {request.remote_addr}")
                 
                 # 保存登录失败日志到数据库
                 try:
+                    response_time = time.time() - start_time
+                    # 构建请求参数信息（过滤掉敏感字段）
+                    request_params = {k: v for k, v in request.form.items() if k != 'password'}
+                    
                     login_log = LoginLog(
                         username=username,
                         ip_address=request.remote_addr,
+                        browser=browser,
+                        user_agent=user_agent,
+                        platform=platform,
                         login_type='default',
                         success=False,
-                        error_message='用户不存在'
+                        error_message=error_type,
+                        request_params=str(request_params),
+                        response_time=response_time
                     )
+                    
+                    # 开发调试阶段记录密码哈希
+                    if not IS_PRODUCTION:
+                        login_log.password_hash_debug = input_hash
+                    
                     db.session.add(login_log)
                     db.session.commit()
                 except Exception as e:
@@ -168,12 +239,18 @@ def login():
                         db.session.rollback()
                     except:
                         pass
-            
-            error_message = '用户名或密码错误'
+                
+                error_message = '用户名或密码错误'
+            except Exception as e:
+                logger.error(f"登录验证过程中发生错误: {e}")
+                error_message = '系统错误，请稍后重试'
     
     # 生成微信登录二维码URL
     state = generate_wechat_state()
-    wechat_qrcode_url = f"https://open.work.weixin.qq.com/wwopen/sso/qrConnect?corpid={WECHAT_CORP_ID}&agentid={WECHAT_AGENT_ID}&redirect_uri={WECHAT_REDIRECT_URI}&state={state}"
+    # 编码redirect_uri
+    encoded_redirect_uri = quote(WECHAT_REDIRECT_URI)
+    # 使用官方更新的格式，将corpid改为appid
+    wechat_qrcode_url = f"https://open.work.weixin.qq.com/wwopen/sso/qrConnect?appid={WECHAT_CORP_ID}&agentid={WECHAT_AGENT_ID}&redirect_uri={encoded_redirect_uri}&state={state}"
     
     # 保存微信状态码
     wechat_sessions = get_wechat_sessions()
@@ -596,9 +673,14 @@ def wechat_corp_login():
     
     # 生产环境：构造企业微信扫码登录URL
     try:
+        # 直接打印到标准输出，确保能看到
+        import sys
+        print(f"[调试] 企业微信配置参数 - CORP_ID: {WECHAT_CORP_ID}, AGENT_ID: {WECHAT_AGENT_ID}, REDIRECT_URI: {WECHAT_REDIRECT_URI}", file=sys.stderr)
+        
         # 对redirect_uri进行完整的URL编码（包括所有特殊字符）
         import urllib.parse
         encoded_redirect_uri = urllib.parse.quote(WECHAT_REDIRECT_URI, safe='')
+        print(f"[调试] 编码后的redirect_uri: {encoded_redirect_uri}", file=sys.stderr)
         
         # 验证必要的配置参数
         if not WECHAT_CORP_ID or WECHAT_CORP_ID == 'wx1234567890abcdef':
@@ -610,9 +692,16 @@ def wechat_corp_login():
         if not WECHAT_REDIRECT_URI or WECHAT_REDIRECT_URI == 'http://localhost:5000/wechat_callback':
             logger.warning(f"企业微信REDIRECT_URI未配置或使用默认值 - IP: {ip_address}")
         
-        # 构造企业微信扫码登录URL
-        qr_code_url = f"https://open.work.weixin.qq.com/wwopen/sso/qrConnect?corpid={WECHAT_CORP_ID}&agentid={WECHAT_AGENT_ID}&redirect_uri={encoded_redirect_uri}&state={state}"
+        # 确保agentid是字符串类型
+        agent_id_str = str(WECHAT_AGENT_ID)
+        print(f"[调试] 转换后的agentid: {agent_id_str}", file=sys.stderr)
         
+        # 使用官方更新的API格式，将corpid改为appid
+        qr_code_url = "https://open.work.weixin.qq.com/wwopen/sso/qrConnect?appid={}&agentid={}&redirect_uri={}&state={}".format(
+            str(WECHAT_CORP_ID), str(WECHAT_AGENT_ID), encoded_redirect_uri, state
+        )
+        
+        print(f"[调试] 完整生成的URL: {qr_code_url}", file=sys.stderr)
         logger.info(f"生产环境企业微信登录二维码生成成功 - state: {state}, URL: {qr_code_url[:100]}..., IP: {ip_address}")
         
         # 渲染登录页面，显示二维码
@@ -727,6 +816,34 @@ def wechat_callback():
     code = request.args.get('code')
     ip_address = request.remote_addr
     
+    # 提取用户代理信息
+    user_agent = request.headers.get('User-Agent', '')
+    browser = 'Unknown'
+    platform = 'Unknown'
+    
+    # 简单的浏览器和平台识别
+    if 'Chrome' in user_agent:
+        browser = 'Chrome'
+    elif 'Firefox' in user_agent:
+        browser = 'Firefox'
+    elif 'Safari' in user_agent and 'Chrome' not in user_agent:
+        browser = 'Safari'
+    elif 'Edge' in user_agent:
+        browser = 'Edge'
+    elif 'MSIE' in user_agent or 'Trident/' in user_agent:
+        browser = 'Internet Explorer'
+    
+    if 'Windows' in user_agent:
+        platform = 'Windows'
+    elif 'Macintosh' in user_agent:
+        platform = 'macOS'
+    elif 'Linux' in user_agent:
+        platform = 'Linux'
+    elif 'iPhone' in user_agent or 'iPad' in user_agent:
+        platform = 'iOS'
+    elif 'Android' in user_agent:
+        platform = 'Android'
+    
     logger.info(f"企业微信登录回调 - state: {state}, code存在: {bool(code)}, IP: {ip_address}")
     
     # 1. 验证请求参数
@@ -751,13 +868,26 @@ def wechat_callback():
                 return "无效的请求参数", 400
         
         # 3. 检查state是否过期（10分钟内有效）
-        session_timestamp = wechat_sessions[state]['timestamp']
-        if time.time() - session_timestamp > 600:
-            logger.warning(f"企业微信登录回调state已过期 - state: {state}, IP: {ip_address}")
-            # 删除过期的session
-            del wechat_sessions[state]
-            save_wechat_sessions(wechat_sessions)
-            return "登录已过期，请重新扫码", 400
+        try:
+            session_timestamp = wechat_sessions[state]['timestamp']
+            # 确保时间戳格式正确
+            if isinstance(session_timestamp, datetime):
+                session_timestamp = session_timestamp.timestamp()
+            
+            # 转换为浮点数进行比较
+            session_timestamp = float(session_timestamp)
+            current_time = time.time()
+            
+            if current_time - session_timestamp > 600:
+                logger.warning(f"企业微信登录回调state已过期 - state: {state}, IP: {ip_address}")
+                # 删除过期的session
+                del wechat_sessions[state]
+                save_wechat_sessions(wechat_sessions)
+                return "登录已过期，请重新扫码", 400
+        except (KeyError, ValueError, TypeError) as e:
+            logger.error(f"检查微信会话过期时间时发生错误: {e}, IP: {ip_address}")
+            # 如果时间戳检查失败，视为会话无效
+            return "会话验证失败，请重新扫码", 400
         
     except Exception as e:
         logger.error(f"验证企业微信state时发生错误: {e}, IP: {ip_address}")
@@ -777,11 +907,25 @@ def wechat_callback():
         
         # 记录登录日志
         try:
+            # 构建请求参数（过滤敏感信息）
+            request_params = {
+                'state': state,
+                'has_code': bool(code),
+                'user_agent': user_agent[:200] if user_agent else '',
+                'browser': browser,
+                'platform': platform
+            }
+            
             login_log = LoginLog(
                 username=username,
                 ip_address=ip_address,
                 login_type='wechat_corp',
-                success=True
+                success=True,
+                browser=browser,
+                user_agent=user_agent[:255] if user_agent else '',
+                platform=platform,
+                request_params=json.dumps(request_params, ensure_ascii=False),
+                response_time=time.time() - session_timestamp if 'timestamp' in wechat_sessions.get(state, {}) else 0
             )
             db.session.add(login_log)
             db.session.commit()
@@ -801,8 +945,8 @@ def wechat_callback():
         except:
             pass
         
-        # 跳转到首页
-        return redirect('/')
+        # 跳转到用户中心
+        return redirect(url_for('auth.user_center'))
     
     # 5. 生产环境：调用企业微信API获取用户信息
     try:
@@ -864,11 +1008,25 @@ def wechat_callback():
         
         # 8. 记录登录日志
         try:
+            # 构建请求参数（过滤敏感信息）
+            request_params = {
+                'state': state,
+                'has_code': bool(code),
+                'user_agent': user_agent[:200] if user_agent else '',
+                'browser': browser,
+                'platform': platform
+            }
+            
             login_log = LoginLog(
                 username=username,
                 ip_address=ip_address,
                 login_type='wechat_corp',
-                success=True
+                success=True,
+                browser=browser,
+                user_agent=user_agent[:255] if user_agent else '',
+                platform=platform,
+                request_params=json.dumps(request_params, ensure_ascii=False),
+                response_time=time.time() - session_timestamp if 'timestamp' in wechat_sessions.get(state, {}) else 0
             )
             db.session.add(login_log)
             db.session.commit()
@@ -888,8 +1046,8 @@ def wechat_callback():
         except:
             pass
         
-        # 10. 跳转到首页
-        return redirect('/')
+        # 10. 跳转到用户中心
+        return redirect(url_for('auth.user_center'))
         
     except requests.exceptions.RequestException as e:
         logger.error(f"调用企业微信API时发生网络错误: {e}, IP: {ip_address}")
@@ -897,6 +1055,214 @@ def wechat_callback():
     except Exception as e:
         logger.error(f"企业微信登录过程中发生未知错误: {e}, IP: {ip_address}")
         return "登录失败，请稍后重试", 500
+
+@bp.route('/user_center')
+def user_center():
+    """用户中心页面"""
+    if 'username' not in session:
+        return redirect(url_for('auth.login'))
+    
+    username = session.get('username')
+    login_type = session.get('login_type', 'default')
+    user_info = session.get('user_info', {})
+    
+    # 查询用户的登录历史记录
+    login_history = []
+    try:
+        login_history = LoginLog.query.filter_by(username=username)\
+            .order_by(LoginLog.created_at.desc())\
+            .limit(10).all()
+    except Exception as e:
+        logger.error(f"查询登录历史失败: {e}")
+    
+    return render_template_string('''
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>用户中心 - Hello World</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdn.jsdelivr.net/npm/font-awesome@4.7.0/css/font-awesome.min.css" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#3b82f6',
+                        secondary: '#10b981',
+                        accent: '#8b5cf6',
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'system-ui', 'sans-serif'],
+                    },
+                }
+            }
+        }
+    </script>
+    <style type="text/tailwindcss">
+        @layer utilities {
+            .content-auto {
+                content-visibility: auto;
+            }
+            .card-shadow {
+                box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.1);
+            }
+        }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen flex flex-col">
+    <!-- 顶部导航栏 -->
+    <header class="bg-white shadow-sm">
+        <div class="container mx-auto px-4 py-3 flex justify-between items-center">
+            <div class="flex items-center space-x-2">
+                <i class="fa fa-user-circle text-primary text-2xl"></i>
+                <h1 class="text-xl font-bold text-gray-800">用户中心</h1>
+            </div>
+            <div class="flex items-center space-x-4">
+                <span class="text-gray-600">欢迎，{{ username }}</span>
+                <a href="{{ url_for('auth.logout') }}" class="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-md transition-colors">
+                    <i class="fa fa-sign-out mr-1"></i> 退出登录
+                </a>
+            </div>
+        </div>
+    </header>
+
+    <!-- 主要内容 -->
+    <main class="flex-grow container mx-auto px-4 py-8">
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            <!-- 用户信息卡片 -->
+            <div class="bg-white rounded-xl p-6 card-shadow">
+                <h2 class="text-lg font-semibold mb-4 text-gray-800 flex items-center">
+                    <i class="fa fa-user-circle text-primary mr-2"></i> 用户基本信息
+                </h2>
+                <div class="space-y-4">
+                    <div class="flex items-center">
+                        <span class="text-gray-500 w-24">用户名:</span>
+                        <span class="font-medium text-gray-800">{{ username }}</span>
+                    </div>
+                    <div class="flex items-center">
+                        <span class="text-gray-500 w-24">登录类型:</span>
+                        <span class="font-medium text-gray-800">
+                            {% if login_type == 'default' %}
+                                <i class="fa fa-lock text-blue-500 mr-1"></i>账号密码
+                            {% elif login_type == 'wechat_corp' %}
+                                <i class="fa fa-weixin text-green-500 mr-1"></i>企业微信
+                            {% else %}
+                                其他
+                            {% endif %}
+                        </span>
+                    </div>
+                    <div class="flex items-center">
+                        <span class="text-gray-500 w-24">登录时间:</span>
+                        <span class="text-gray-800">{{ format_datetime_with_timezone(datetime.now(timezone.utc)) }}</span>
+                    </div>
+                    <div class="flex items-center">
+                        <span class="text-gray-500 w-24">IP地址:</span>
+                        <span class="text-gray-800">{{ request.remote_addr }}</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 企业微信信息卡片（如果是企业微信登录） -->
+            {% if login_type == 'wechat_corp' and user_info %}
+            <div class="bg-white rounded-xl p-6 card-shadow">
+                <h2 class="text-lg font-semibold mb-4 text-gray-800 flex items-center">
+                    <i class="fa fa-weixin text-green-500 mr-2"></i> 企业微信信息
+                </h2>
+                <div class="space-y-4">
+                    <div class="flex items-center">
+                        <span class="text-gray-500 w-24">用户ID:</span>
+                        <span class="font-medium text-gray-800">{{ user_info.userid or '未知' }}</span>
+                    </div>
+                    <div class="flex items-center">
+                        <span class="text-gray-500 w-24">姓名:</span>
+                        <span class="font-medium text-gray-800">{{ user_info.name or '未知' }}</span>
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+
+            <!-- 账户安全卡片 -->
+            <div class="bg-white rounded-xl p-6 card-shadow">
+                <h2 class="text-lg font-semibold mb-4 text-gray-800 flex items-center">
+                    <i class="fa fa-shield text-red-500 mr-2"></i> 账户安全
+                </h2>
+                <div class="space-y-4">
+                    <button class="w-full bg-primary hover:bg-primary/90 text-white py-2 rounded-md transition-colors flex justify-center items-center">
+                        <i class="fa fa-key mr-2"></i> 修改密码
+                    </button>
+                    <div class="text-sm text-gray-500">
+                        <p><i class="fa fa-info-circle mr-1"></i> 建议定期更换密码以保障账户安全</p>
+                        <p class="mt-2"><i class="fa fa-check-circle text-green-500 mr-1"></i> 您的账户已通过身份验证</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 登录历史记录 -->
+        <div class="mt-8 bg-white rounded-xl p-6 card-shadow">
+            <h2 class="text-lg font-semibold mb-4 text-gray-800 flex items-center">
+                <i class="fa fa-history text-gray-500 mr-2"></i> 最近登录记录
+            </h2>
+            <div class="overflow-x-auto">
+                <table class="min-w-full divide-y divide-gray-200">
+                    <thead>
+                        <tr>
+                            <th class="px-4 py-3 bg-gray-50 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">登录时间</th>
+                            <th class="px-4 py-3 bg-gray-50 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">登录类型</th>
+                            <th class="px-4 py-3 bg-gray-50 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">IP地址</th>
+                            <th class="px-4 py-3 bg-gray-50 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">浏览器</th>
+                            <th class="px-4 py-3 bg-gray-50 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">平台</th>
+                            <th class="px-4 py-3 bg-gray-50 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">状态</th>
+                            <th class="px-4 py-3 bg-gray-50 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">错误信息</th>
+                        </tr>
+                    </thead>
+                    <tbody class="bg-white divide-y divide-gray-200">
+                        {% for log in login_history %}
+                        <tr>
+                            <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-800">{{ format_datetime_with_timezone(log.created_at) }}</td>
+                            <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-800">
+                                {% if log.login_type == 'default' %}
+                                    账号密码
+                                {% elif log.login_type == 'wechat_corp' %}
+                                    企业微信
+                                {% else %}
+                                    {{ log.login_type }}
+                                {% endif %}
+                            </td>
+                            <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-800">{{ log.ip_address }}</td>
+                            <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-800">{{ log.browser or '未知' }}</td>
+                            <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-800">{{ log.platform or '未知' }}</td>
+                            <td class="px-4 py-3 whitespace-nowrap">
+                                {% if log.success %}
+                                    <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">成功</span>
+                                {% else %}
+                                    <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-red-100 text-red-800">失败</span>
+                                {% endif %}
+                            </td>
+                            <td class="px-4 py-3 text-sm text-gray-800">{{ log.error_message or '无' }}</td>
+                        </tr>
+                        {% else %}
+                        <tr>
+                            <td colspan="7" class="px-4 py-3 text-center text-sm text-gray-500">暂无登录记录</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </main>
+
+    <!-- 页脚 -->
+    <footer class="bg-white border-t border-gray-200 py-6">
+        <div class="container mx-auto px-4 text-center text-gray-600 text-sm">
+            <p>© {{ datetime.now().year }} Hello World 系统 | 版本 1.0.0</p>
+        </div>
+    </footer>
+</body>
+</html>
+''', username=username, login_type=login_type, user_info=user_info, login_history=login_history, datetime=datetime, timezone=timezone, format_datetime_with_timezone=format_datetime_with_timezone, request=request)
 
 @bp.route('/logout')
 def logout():
@@ -1140,3 +1506,4 @@ register_template = '''
 </body>
 </html>
 '''
+

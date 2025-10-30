@@ -1,7 +1,7 @@
 from flask import Flask
 import os
 import logging
-from config import config_by_name, MySQLConfig
+from config import config_by_name, MySQLConfig, DevelopmentConfig, ProductionConfig
 from flask_cors import CORS
 
 # 配置日志
@@ -28,8 +28,11 @@ except Exception as e:
 config_name = os.environ.get('APP_ENV', 'development')
 logger.info(f"应用环境: {config_name}")
 
-# 确保所有环境都使用MySQL配置
-config = MySQLConfig()
+# 确保所有环境都使用MySQL配置 - 使用正确的环境配置类
+if config_name == 'production':
+    config = ProductionConfig()
+else:
+    config = DevelopmentConfig()
 logger.info(f"数据库配置: {config.SQLALCHEMY_DATABASE_URI}")
 
 # 初始化Flask应用

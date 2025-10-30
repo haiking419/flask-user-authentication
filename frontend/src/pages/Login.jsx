@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 
 function Login() {
@@ -9,7 +9,12 @@ function Login() {
   })
   const [errorMessage, setErrorMessage] = useState('')
   const [wechatQrcodeUrl, setWechatQrcodeUrl] = useState('')
+  const [wechatLoginState, setWechatLoginState] = useState('')
+  const [scanStatus, setScanStatus] = useState('init') // init, scanning, scanned, confirmed, expired
+  const [qrcodeExpiryTimer, setQrcodeExpiryTimer] = useState(null)
+  const [checkStatusTimer, setCheckStatusTimer] = useState(null)
   const navigate = useNavigate()
+  const qrcodeRef = useRef(null)
 
   useEffect(() => {
     // 获取企业微信登录二维码URL
@@ -36,13 +41,107 @@ function Login() {
         console.log('获取到的企业微信数据:', data)
         if (data.success && data.qrcode_url) {
           setWechatQrcodeUrl(data.qrcode_url)
+          setWechatLoginState(data.state)
+          // 保存state参数到本地存储，用于后续验证
+          if (data.state) {
+            localStorage.setItem('wechat_login_state', data.state)
+            console.log('保存企业微信登录state:', data.state)
+          }
+          // 设置扫描状态为等待扫描
+          setScanStatus('scanning')
+          // 启动二维码过期定时器（通常企业微信二维码有效期为5分钟）
+          const expiryTimer = setTimeout(() => {
+            setScanStatus('expired')
+          }, 300000) // 5分钟后过期
+          setQrcodeExpiryTimer(expiryTimer)
+          
+          // 启动登录状态检查定时器
+          startStatusCheck(data.state)
         }
       })
       .catch(error => {
         console.error('获取企业微信登录链接失败:', error)
         // 错误处理，避免页面崩溃
       })
+      
+    // 清理函数
+    return () => {
+      if (qrcodeExpiryTimer) clearTimeout(qrcodeExpiryTimer)
+      if (checkStatusTimer) clearInterval(checkStatusTimer)
+    }
   }, [])
+  
+  // 启动登录状态检查
+  const startStatusCheck = (state) => {
+    // 清除之前可能存在的定时器
+    if (checkStatusTimer) clearInterval(checkStatusTimer)
+    
+    // 每2秒检查一次登录状态
+    const timer = setInterval(() => {
+      checkLoginStatus(state)
+    }, 2000)
+    
+    setCheckStatusTimer(timer)
+  }
+  
+  // 检查登录状态
+  const checkLoginStatus = async (state) => {
+    try {
+      const response = await fetch(`/api/check_wechat_login?state=${state}`)
+      const data = await response.json()
+      
+      if (data.success) {
+        if (data.status === 'scanned') {
+          setScanStatus('scanned')
+        } else if (data.status === 'confirmed') {
+          setScanStatus('confirmed')
+          // 清除定时器
+          if (checkStatusTimer) clearInterval(checkStatusTimer)
+          if (qrcodeExpiryTimer) clearTimeout(qrcodeExpiryTimer)
+          // 登录成功，跳转到首页
+          setTimeout(() => {
+            navigate('/')
+          }, 1000)
+        }
+      } else if (data.message === 'expired') {
+        setScanStatus('expired')
+        if (checkStatusTimer) clearInterval(checkStatusTimer)
+      }
+    } catch (error) {
+      console.error('检查登录状态失败:', error)
+    }
+  }
+  
+  // 刷新二维码
+  const refreshQrcode = () => {
+    // 清除之前的定时器
+    if (qrcodeExpiryTimer) clearTimeout(qrcodeExpiryTimer)
+    if (checkStatusTimer) clearInterval(checkStatusTimer)
+    
+    // 重新获取二维码
+    fetch('/api/wechat_qrcode')
+      .then(response => response.json())
+      .then(data => {
+        if (data.success && data.qrcode_url) {
+          setWechatQrcodeUrl(data.qrcode_url)
+          setWechatLoginState(data.state)
+          localStorage.setItem('wechat_login_state', data.state)
+          setScanStatus('scanning')
+          
+          // 重新设置过期定时器
+          const expiryTimer = setTimeout(() => {
+            setScanStatus('expired')
+          }, 300000)
+          setQrcodeExpiryTimer(expiryTimer)
+          
+          // 重新启动状态检查
+          startStatusCheck(data.state)
+        }
+      })
+      .catch(error => {
+        console.error('刷新企业微信二维码失败:', error)
+      })
+  }
 
   const handleChange = (e) => {
     const { name, value } = e.target
@@ -198,10 +297,95 @@ function Login() {
         </div>
 
         <div className="mt-6">
-          <a href={wechatQrcodeUrl} className="w-full inline-flex justify-center items-center space-x-2 py-3 px-4 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 transition-colors">
-            <i className="fa fa-building text-blue-600 text-xl"></i>
-            <span>企业微信登录</span>
-          </a>
+          {/* 企业微信扫码登录区域 */}
+          <div className="bg-white rounded-xl shadow-md p-6 border border-gray-100 transition-all duration-300 hover:shadow-lg">
+            <div className="flex flex-col items-center">
+              <div className="text-center mb-4">
+                <h3 className="text-lg font-semibold text-gray-800">企业微信扫码登录</h3>
+                <p className="text-sm text-gray-500 mt-1">使用企业微信扫描下方二维码</p>
+              </div>
+              
+              <div className="relative mb-4 w-48 h-48 bg-gray-50 rounded-lg flex items-center justify-center">
+                {scanStatus === 'init' && (
+                  <div className="text-gray-400">
+                    <i className="fa fa-refresh fa-spin text-2xl"></i>
+                    <p className="mt-2 text-sm">加载中...</p>
+                  </div>
+                )}
+                
+                {scanStatus === 'scanning' && wechatQrcodeUrl && (
+                  <>
+                    <img 
+                      ref={qrcodeRef}
+                      src={wechatQrcodeUrl} 
+                      alt="企业微信登录二维码" 
+                      className="max-w-full max-h-full p-2"
+                    />
+                    <div className="absolute inset-0 flex items-center justify-center bg-black/30 opacity-0 hover:opacity-100 transition-opacity duration-300">
+                      <div className="text-white text-center p-2">
+                        <i className="fa fa-refresh text-xl mb-1"></i>
+                        <p className="text-xs">点击刷新</p>
+                      </div>
+                    </div>
+                  </>
+                )}
+                
+                {scanStatus === 'scanned' && (
+                  <div className="text-green-600 text-center">
+                    <i className="fa fa-check-circle text-4xl mb-2"></i>
+                    <p>已扫码，请在企业微信中确认</p>
+                  </div>
+                )}
+                
+                {scanStatus === 'confirmed' && (
+                  <div className="text-blue-600 text-center">
+                    <i className="fa fa-arrow-right text-4xl mb-2"></i>
+                    <p>登录成功，正在跳转...</p>
+                  </div>
+                )}
+                
+                {scanStatus === 'expired' && (
+                  <div className="text-red-500 text-center">
+                    <i className="fa fa-clock-o text-4xl mb-2"></i>
+                    <p>二维码已过期</p>
+                    <button 
+                      onClick={refreshQrcode}
+                      className="mt-2 px-3 py-1 text-sm bg-red-100 text-red-600 rounded hover:bg-red-200 transition-colors"
+                    >
+                      刷新二维码
+                    </button>
+                  </div>
+                )}
+              </div>
+              
+              {/* 状态提示 */}
+              <div className="text-sm text-gray-500 text-center">
+                {scanStatus === 'scanning' && (
+                  <p className="flex items-center justify-center">
+                    <i className="fa fa-info-circle mr-1"></i>
+                    请使用企业微信扫描二维码登录
+                  </p>
+                )}
+                {scanStatus === 'scanned' && (
+                  <p className="text-green-600 flex items-center justify-center">
+                    <i className="fa fa-check-circle mr-1"></i>
+                    已扫描，请在手机上确认
+                  </p>
+                )}
+              </div>
+              
+              {/* 刷新按钮 - 仅在扫描状态显示 */}
+              {scanStatus === 'scanning' && (
+                <button 
+                  onClick={refreshQrcode}
+                  className="mt-4 text-sm text-blue-600 hover:text-blue-800 transition-colors flex items-center"
+                >
+                  <i className="fa fa-refresh mr-1"></i>
+                  刷新二维码
+                </button>
+              )}
+            </div>
+          </div>
         </div>
       </div>
 

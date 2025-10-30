@@ -60,9 +60,10 @@ set DATABASE_URL=mysql+pymysql://username:password@host:port/dbname?charset=utf8
 | WECHAT_CORP_ID | 企业微信CorpID | wx1234567890abcdef |
 | WECHAT_AGENT_ID | 企业微信应用ID | 1000001 |
 | WECHAT_APP_SECRET | 企业微信应用密钥 | abcdef1234567890abcdef1234567890 |
-| WECHAT_REDIRECT_URI | 回调地址 | http://your-domain.com/wechat_callback |
+| WECHAT_REDIRECT_URI | 回调地址 | https://your-domain.com/wechat_callback |
 | DATABASE_URL | 数据库连接字符串 | mysql+pymysql://username:password@host:port/dbname?charset=utf8mb4 |
 | APP_ENV | 应用环境 | development/production/testing |
+| PERMANENT_SESSION_LIFETIME | 会话有效期（秒） | 86400
 
 ## 数据库配置
 
@@ -110,6 +111,8 @@ set DEBUG=False
 1. **配置不生效**：确保重启了应用，检查环境变量是否正确设置
 2. **数据库连接失败**：检查 `DATABASE_URL` 是否正确，特别是密码中的特殊字符是否编码
 3. **企业微信登录失败**：检查企业微信相关配置，确保回调地址已在企业微信后台配置
+4. **登录日志记录异常**：检查数据库连接和权限，确保应用有写入数据库的权限
+5. **会话过期时间问题**：通过 `PERMANENT_SESSION_LIFETIME` 配置调整会话有效期（秒）
 
 ## 紧急回滚
 
@@ -121,4 +124,8 @@ set DEBUG=False
 
 ---
 
-**注意**：配置文件包含敏感信息，请确保安全存储，不要提交到代码仓库。
+**注意**：
+1. 配置文件包含敏感信息，请确保安全存储，不要提交到代码仓库
+2. 生产环境中务必使用HTTPS协议
+3. 企业微信回调地址必须与企业微信后台配置完全一致
+4. 登录日志功能会自动创建所需的数据表，无需额外配置

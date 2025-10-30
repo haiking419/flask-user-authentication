@@ -2,7 +2,7 @@
 
 ## 项目概述
 
-这是一个使用Flask后端和React前端的前后端分离应用示例，提供用户注册、登录功能，支持普通账号登录和企业微信扫码登录。应用采用MySQL数据库存储数据。
+这是一个使用Flask后端和React前端的前后端分离应用示例，提供用户注册、登录功能，支持普通账号登录和企业微信扫码登录。应用采用MySQL数据库存储数据，并实现了完整的登录日志记录功能，用于安全审计和问题排查。
 
 ## 技术栈
 
@@ -30,6 +30,7 @@
 - 传统用户名密码登录
 - 企业微信扫码登录
 - 会话持久化（1天有效期）
+- 登录日志记录（记录用户名、IP地址、登录状态、错误信息等）
 
 ### 3. 验证码服务
 - 邮件验证码发送
@@ -53,7 +54,8 @@ helloworld/
 │   ├── templates/       # HTML模板
 │   └── utils/           # 工具函数
 │       ├── __init__.py
-│       └── config_manager.py  # 配置管理
+│       ├── config_manager.py  # 配置管理
+│       └── time_utils.py      # 时间处理工具
 ├── frontend/            # 前端React应用
 │   ├── src/             # 前端源代码
 │   │   ├── pages/       # 页面组件
@@ -64,10 +66,19 @@ helloworld/
 │   ├── index.html       # HTML模板
 │   ├── package.json     # 前端依赖
 │   └── vite.config.js   # Vite配置
-├── data/                # JSON数据存储
-│   ├── users.json
-│   ├── verifications.json
-│   └── wechat_sessions.json
+├── tests/               # 测试目录
+│   ├── integration/     # 集成测试
+│   │   ├── __init__.py
+│   │   ├── check_login_logs.py
+│   │   ├── generate_captcha_test.py
+│   │   ├── test_email.py
+│   │   ├── test_login_log.py
+│   │   └── test_mysql_connection.py
+│   └── unit/            # 单元测试
+│       ├── __init__.py
+│       ├── test_models.py
+│       ├── test_routes.py
+│       └── test_utils.py
 ├── .env.development     # 开发环境配置
 ├── .env.production      # 生产环境配置
 ├── app.py               # Flask应用主文件
@@ -102,7 +113,7 @@ helloworld/
 ### 4. 数据模型模块 (app/models)
 
 - `app/models/db.py` - MySQL数据库模型和操作
-  - 定义用户、验证码和微信会话等数据模型
+  - 定义用户、验证码、微信会话和登录日志等数据模型
   - 提供数据库初始化和清理功能
   - 所有数据直接存储在MySQL数据库中，不再使用JSON文件
 
@@ -184,11 +195,23 @@ npm run build
 2. 部署后端（可使用Gunicorn、uWSGI等WSGI服务器）
 3. 配置Web服务器（如Nginx）提供静态文件和代理API请求
 
+## 文档位置
+
+除了本README.md文件外，其他项目文档都位于`docs/`目录中，包括：
+- **配置部署指南**：`docs/CONFIG_DEPLOYMENT_GUIDE.md`
+- **数据库迁移指南**：`docs/DATABASE_MIGRATION.md`
+- **升级指南**：`docs/UPGRADE_GUIDE.md`
+- **版本变更日志**：`docs/VERSION_CHANGELOG.md`
+- **企业微信配置指南**：`docs/WECHAT_CORP_CONFIG_GUIDE.md`
+- **发布说明**：`docs/release_notes.md`
+
 ## 注意事项
 
 1. 在生产环境中，务必修改默认密钥和数据库配置
 2. 确保数据库连接安全，避免硬编码敏感信息
 3. 前端构建后的文件应部署到静态文件服务器或CDN
+4. 登录日志功能会记录用户登录尝试信息，请确保日志存储安全
+5. 定期清理过期的验证码、微信会话数据和旧登录日志
 
 在 `app/__init__.py` 或 `config.py` 中可以修改以下配置：
 
@@ -251,8 +274,11 @@ python run_tests.py
 
 1. 生产环境中请勿使用示例的默认配置
 2. 确保敏感信息（如密码、密钥）不被提交到代码仓库
-3. 定期清理过期的验证码和微信会话数据
-4. 考虑增加登录失败次数限制和其他安全措施
+3. 定期清理过期的验证码、微信会话数据和旧登录日志
+4. 登录日志中不会记录敏感信息（如密码），但请确保日志存储安全
+5. 考虑增加登录失败次数限制和其他安全措施
+6. 企业微信登录必须配置正确的IP白名单和回调域名
+7. 生产环境必须使用HTTPS协议保护数据传输
 
 ## 许可证
 

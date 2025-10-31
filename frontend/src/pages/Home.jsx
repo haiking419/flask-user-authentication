@@ -95,7 +95,7 @@ function Home() {
             </span>
           </div>
           <div className="space-y-3">
-            <p><span className="text-gray-500">用户名:</span> {userInfo?.username || '未设置'}</p>
+            <p><span className="text-gray-500">显示名称:</span> {userInfo?.display_name || userInfo?.username || '未设置'}</p>
             <p><span className="text-gray-500">邮箱:</span> {userInfo?.email || '未设置'}</p>
             <p><span className="text-gray-500">注册时间:</span> {userInfo?.created_at ? new Date(userInfo.created_at).toLocaleString() : '未知'}</p>
           </div>

@@ -37,6 +37,13 @@ try:
             # 1. 更新User表，添加企业微信相关字段
             print("\n1. 更新User表，添加企业微信相关字段...")
             
+            # 添加display_name字段（系统用户名，用于页面展示）
+            try:
+                connection.execute(text("ALTER TABLE user ADD COLUMN display_name VARCHAR(100) NULL AFTER username"))
+                print("   ✓ display_name字段添加成功")
+            except Exception as e:
+                print(f"   ℹ display_name字段可能已存在: {str(e)}")
+                
             # 添加wechat_corp_userid字段
             try:
                 connection.execute(text("ALTER TABLE user ADD COLUMN wechat_corp_userid VARCHAR(120) NULL UNIQUE AFTER email"))

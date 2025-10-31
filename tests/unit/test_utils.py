@@ -31,7 +31,7 @@ class TestUtils(unittest.TestCase):
     def test_generate_wechat_state(self):
         """测试微信登录状态码生成功能"""
         # 生成状态码
-        state = generate_wechat_state()
+        state = generate_wechat_state(action='login')
         
         # 验证状态码格式
         self.assertEqual(len(state), 32)
@@ -43,7 +43,7 @@ class TestUtils(unittest.TestCase):
         # 验证多次生成的状态码不同（概率测试）
         states = set()
         for _ in range(100):
-            states.add(generate_wechat_state())
+            states.add(generate_wechat_state(action='login'))
         self.assertGreater(len(states), 90)  # 期望至少90个不同的状态码
     
     @patch('builtins.print')

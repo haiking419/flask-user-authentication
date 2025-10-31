@@ -118,6 +118,7 @@ def register():
     try:
         data = request.get_json()
         username = data.get('username', '')
+        display_name = data.get('display_name', username)  # 系统用户名，默认为登录账号
         email = data.get('email', '')
         verification_code = data.get('verification_code', '')
         password = data.get('password', '')
@@ -150,6 +151,7 @@ def register():
         # 创建用户
         User.create(
             username=username,
+            display_name=display_name,
             email=email,
             password=password,  # 注意：实际应用中应该加密存储密码
             created_at=datetime.now()
@@ -197,6 +199,7 @@ def login():
             'user': {
                 'id': user.id,
                 'username': user.username,
+                'display_name': user.display_name,
                 'email': user.email,
                 'created_at': user.created_at.isoformat() if hasattr(user, 'created_at') else None
             }
@@ -226,6 +229,7 @@ def get_user_info():
             'user': {
                 'id': user.id,
                 'username': user.username,
+                'display_name': user.display_name,
                 'email': user.email,
                 'created_at': user.created_at.isoformat() if hasattr(user, 'created_at') else None
             }
@@ -239,8 +243,17 @@ def get_user_info():
 @api.route('/logout', methods=['POST'])
 def logout():
     try:
-        # 清除会话
+        # 先获取用户信息用于日志记录
+        username = session.get('username', '未知用户')
+        login_type = session.get('login_type', '未知类型')
+        
+        # 记录退出日志
+        from flask import request
+        print(f"API用户退出登录 - 用户名: {username}, 登录类型: {login_type}, IP: {request.remote_addr}")
+        
+        # 完整清除所有会话信息
         session.clear()
+        
         return jsonify({'success': True, 'message': '退出成功'})
     except Exception as e:
         print(f"退出登录异常: {str(e)}")

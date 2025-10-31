@@ -5,8 +5,9 @@ from config import config_by_name, MySQLConfig, DevelopmentConfig, ProductionCon
 from flask_cors import CORS
 
 # 配置日志
-logging.basicConfig(level=logging.INFO,
-                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+# 为了调试企业微信绑定问题，临时将日志级别设置为DEBUG
+logging.basicConfig(level=logging.DEBUG,
+                    format='[%(asctime)s] [%(levelname)s] [%(filename)s:%(lineno)d] %(message)s')
 logger = logging.getLogger(__name__)
 
 # 尝试加载环境变量文件

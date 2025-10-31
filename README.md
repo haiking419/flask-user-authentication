@@ -69,21 +69,33 @@ helloworld/
 ├── tests/               # 测试目录
 │   ├── integration/     # 集成测试
 │   │   ├── __init__.py
-│   │   ├── check_login_logs.py
-│   │   ├── generate_captcha_test.py
 │   │   ├── test_email.py
 │   │   ├── test_login_log.py
 │   │   └── test_mysql_connection.py
+│   ├── __init__.py
+│   ├── test_wechat_bind.py
 │   └── unit/            # 单元测试
 │       ├── __init__.py
 │       ├── test_models.py
 │       ├── test_routes.py
 │       └── test_utils.py
+├── docs/                # 项目文档
+│   ├── CONFIG_DEPLOYMENT_GUIDE.md
+│   ├── DATABASE_MIGRATION.md
+│   ├── UPGRADE_GUIDE.md
+│   ├── VERSION_CHANGELOG.md
+│   ├── WECHAT_CORP_CONFIG_GUIDE.md
+│   └── release_notes.md
+├── config/              # 配置文件目录
+│   └── wechat_corp_example.py
+├── migrations/          # 数据库迁移脚本
 ├── .env.development     # 开发环境配置
+├── .env.example         # 环境变量示例
 ├── .env.production      # 生产环境配置
 ├── app.py               # Flask应用主文件
 ├── config.py            # 配置文件
 ├── run.py               # 后端启动脚本
+├── run_tests.py         # 测试运行脚本
 └── requirements.txt     # 后端依赖
 ```
 

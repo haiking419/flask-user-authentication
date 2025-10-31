@@ -47,9 +47,27 @@ def generate_verification_code():
     
     return code
 
-def generate_wechat_state():
-    """生成微信登录状态码"""
-    return ''.join(random.choices('0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ', k=32))
+def generate_wechat_state(action, **kwargs):
+    """
+    生成微信登录/绑定状态码，可携带action及其他必要信息
+    
+    Args:
+        action: 操作类型，必填，登录为'login'，绑定为'bind'
+        **kwargs: 其他需要携带的信息
+        
+    Returns:
+        str: 包含action信息的state字符串
+    """
+    # 生成随机部分作为基础
+    random_part = ''.join(random.choices('0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ', k=24))
+    
+    # 添加action标识
+    action_marker = 'L' if action == 'login' else 'B' if action == 'bind' else 'U'  # U表示未知
+    
+    # 组合生成最终state
+    state = f"{action_marker}_{random_part}"
+    
+    return state
 
 def send_email(to_email, subject, content):
     """发送邮件"""

@@ -45,6 +45,7 @@ ENV/
 
 # Data files
 /data/backup/
+/app/temp/
 
 # Testing
 /tests/temp/

@@ -224,15 +224,26 @@ def get_user_info():
         if not user:
             return jsonify({'success': False, 'message': '用户不存在'}), 404
         
+        # 构建用户信息响应，包含企业微信相关字段
+        user_response = {
+            'id': user.id,
+            'username': user.username,
+            'display_name': user.display_name,
+            'email': user.email,
+            'created_at': user.created_at.isoformat() if hasattr(user, 'created_at') else None
+        }
+        
+        # 添加企业微信相关字段（如果存在）
+        if hasattr(user, 'wechat_corp_avatar'):
+            user_response['wechat_corp_avatar'] = user.wechat_corp_avatar
+        if hasattr(user, 'wechat_corp_name'):
+            user_response['wechat_corp_name'] = user.wechat_corp_name
+        if hasattr(user, 'wechat_corp_userid'):
+            user_response['wechat_corp_userid'] = user.wechat_corp_userid
+        
         return jsonify({
             'success': True,
-            'user': {
-                'id': user.id,
-                'username': user.username,
-                'display_name': user.display_name,
-                'email': user.email,
-                'created_at': user.created_at.isoformat() if hasattr(user, 'created_at') else None
-            }
+            'user': user_response
         })
         
     except Exception as e:

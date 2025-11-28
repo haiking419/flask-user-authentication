@@ -13,6 +13,8 @@ function Login() {
   const [scanStatus, setScanStatus] = useState('init') // init, scanning, scanned, confirmed, expired
   const [qrcodeExpiryTimer, setQrcodeExpiryTimer] = useState(null)
   const [checkStatusTimer, setCheckStatusTimer] = useState(null)
+  const [showPassword, setShowPassword] = useState(false) // 添加密码可见性切换
+  const [isLoading, setIsLoading] = useState(false) // 添加加载状态
   const navigate = useNavigate()
   const qrcodeRef = useRef(null)
 
@@ -87,12 +89,21 @@ function Login() {
   // 检查登录状态
   const checkLoginStatus = async (state) => {
     try {
-      const response = await fetch(`/api/check_wechat_login?state=${state}`)
+      // 修复API URL格式，使用正确的路径参数格式
+      const response = await fetch(`/api/check_wechat_login/${state}`)
       const data = await response.json()
       
       if (data.success) {
         if (data.status === 'scanned') {
           setScanStatus('scanned')
+          // 已扫码状态下，缩短检查间隔
+          if (checkStatusTimer) {
+            clearInterval(checkStatusTimer)
+            const timer = setInterval(() => {
+              checkLoginStatus(state)
+            }, 1000) // 缩短到1秒检查一次
+            setCheckStatusTimer(timer)
+          }
         } else if (data.status === 'confirmed') {
           setScanStatus('confirmed')
           // 清除定时器
@@ -102,10 +113,10 @@ function Login() {
           setTimeout(() => {
             navigate('/')
           }, 1000)
+        } else if (data.status === 'expired') {
+          setScanStatus('expired')
+          if (checkStatusTimer) clearInterval(checkStatusTimer)
         }
-      } else if (data.message === 'expired') {
-        setScanStatus('expired')
-        if (checkStatusTimer) clearInterval(checkStatusTimer)
       }
     } catch (error) {
       console.error('检查登录状态失败:', error)
@@ -151,6 +162,7 @@ function Login() {
   const handleSubmit = async (e) => {
     e.preventDefault()
     setErrorMessage('')
+    setIsLoading(true) // 显示加载状态
 
     try {
       const response = await fetch('/api/login', {
@@ -164,13 +176,19 @@ function Login() {
       const data = await response.json()
       
       if (data.success) {
-        navigate('/')
+        // 登录成功，添加过渡效果
+        setIsLoading(true)
+        setTimeout(() => {
+          navigate('/')
+        }, 500)
       } else {
         setErrorMessage(data.message || '登录失败，请重试')
       }
     } catch (error) {
       setErrorMessage('网络错误，请稍后重试')
       console.error('登录错误:', error)
+    } finally {
+      setIsLoading(false) // 隐藏加载状态
     }
   }
 
@@ -236,15 +254,26 @@ function Login() {
               <i className="fa fa-key"></i>
             </div>
             <input
-              type="password"
+              type={showPassword ? "text" : "password"}
               id="password"
               name="password"
               value={formData.password}
               onChange={handleChange}
               required
-              className="pl-10 w-full px-3 py-3 border border-gray-300 rounded-lg shadow-sm focus:outline-none input-focus transition duration-200"
+              className="pl-10 pr-10 w-full px-3 py-3 border border-gray-300 rounded-lg shadow-sm focus:outline-none input-focus transition duration-200"
               placeholder="请输入密码"
             />
+            {/* 添加密码可见性切换按钮 */}
+            <div className="absolute inset-y-0 right-0 pr-3 flex items-center">
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                className="text-gray-400 hover:text-gray-600 transition-colors"
+                title={showPassword ? "隐藏密码" : "显示密码"}
+              >
+                <i className={showPassword ? "fa fa-eye-slash" : "fa fa-eye"}></i>
+              </button>
+            </div>
           </div>
         </div>
 
@@ -280,9 +309,18 @@ function Login() {
 
         <button
           type="submit"
-          className="btn btn-primary w-full"
+          disabled={isLoading}
+          className="btn btn-primary w-full flex items-center justify-center"
         >
-          <i className="fa fa-sign-in mr-2"></i> 登录
+          {isLoading ? (
+            <>
+              <i className="fa fa-spinner fa-spin mr-2"></i> 登录中...
+            </>
+          ) : (
+            <>
+              <i className="fa fa-sign-in mr-2"></i> 登录
+            </>
+          )}
         </button>
       </form>
 

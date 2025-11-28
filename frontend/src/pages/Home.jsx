@@ -71,9 +71,17 @@ function Home() {
         </h1>
         <div className="flex items-center space-x-4">
           <div className="flex items-center">
-            <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center text-primary">
-              <i className="fa fa-user"></i>
-            </div>
+            {userInfo?.wechat_corp_avatar ? (
+              <img 
+                src={userInfo.wechat_corp_avatar} 
+                alt="企业微信头像" 
+                className="w-10 h-10 rounded-full object-cover border-2 border-primary"
+              />
+            ) : (
+              <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center text-primary">
+                <i className="fa fa-user"></i>
+              </div>
+            )}
             <span className="ml-2 font-medium">{userInfo?.username || '用户'}</span>
           </div>
           <button 
@@ -98,6 +106,19 @@ function Home() {
             <p><span className="text-gray-500">显示名称:</span> {userInfo?.display_name || userInfo?.username || '未设置'}</p>
             <p><span className="text-gray-500">邮箱:</span> {userInfo?.email || '未设置'}</p>
             <p><span className="text-gray-500">注册时间:</span> {userInfo?.created_at ? new Date(userInfo.created_at).toLocaleString() : '未知'}</p>
+            {userInfo?.wechat_corp_name && (
+              <p><span className="text-gray-500">企业微信:</span> {userInfo.wechat_corp_name}</p>
+            )}
+            {userInfo?.wechat_corp_avatar && (
+              <div className="flex items-center">
+                <span className="text-gray-500 mr-2">企业微信头像:</span>
+                <img 
+                  src={userInfo.wechat_corp_avatar} 
+                  alt="企业微信头像" 
+                  className="w-16 h-16 rounded-lg object-cover border border-gray-200"
+                />
+              </div>
+            )}
           </div>
         </div>
 

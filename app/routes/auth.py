@@ -1410,6 +1410,43 @@ def handle_production_mode_callback(state, session_info, action, code, ip_addres
         if not user_detail:
             return result
         
+        # 优化头像获取逻辑：优先使用oauth2授权获取的头像信息
+        # 1. 首先尝试从user_info中获取头像（oauth2授权获取）
+        oauth_avatar = user_info.get('avatar', '')
+        if oauth_avatar and oauth_avatar.strip() != '':
+            user_detail['avatar'] = oauth_avatar
+            logger.info(f"使用oauth2授权获取的头像URL - 用户: {userid}, IP: {ip_address}")
+            print(f"DEBUG: 使用oauth2授权获取的头像URL: {oauth_avatar}")
+        else:
+            # 2. 如果没有，检查是否有user_ticket，尝试获取详细授权信息
+            if 'user_ticket' in user_info and user_info['user_ticket']:
+                ticket_detail = get_wechat_user_detail_with_ticket(access_token, user_info['user_ticket'], ip_address)
+                if ticket_detail:
+                    ticket_avatar = ticket_detail.get('avatar', '')
+                    if ticket_avatar and ticket_avatar.strip() != '':
+                        user_detail['avatar'] = ticket_avatar
+                        logger.info(f"使用user_ticket获取的头像URL - 用户: {userid}, IP: {ip_address}")
+                        print(f"DEBUG: 使用user_ticket获取的头像URL: {ticket_avatar}")
+        
+        # 3. 合并其他oauth2授权信息
+        if user_info:
+            # 优先使用oauth2授权获取的名称
+            if user_info.get('name'):
+                user_detail['name'] = user_info.get('name')
+            # 合并其他可能的授权字段
+            for key, value in user_info.items():
+                if key not in user_detail and value:  # 只合并非空值
+                    user_detail[key] = value
+            
+            logger.info(f"成功合并oauth2授权信息，更新后的用户信息包含字段: {list(user_detail.keys())} - IP: {ip_address}")
+            print(f"DEBUG: 合并oauth2授权信息到用户详情 - 用户ID: {userid}")
+        
+        # 4. 最终检查头像URL，如果仍为空则设置为None
+        if not user_detail.get('avatar') or user_detail.get('avatar').strip() == '':
+            user_detail['avatar'] = None
+            logger.info(f"用户{userid}的头像URL为空，设置为None - IP: {ip_address}")
+            print(f"DEBUG: 用户{userid}的头像URL为空，设置为None")
+        
         # 4. 根据操作类型处理
         if action == 'login':
             # 处理登录操作
@@ -1453,25 +1490,59 @@ def get_wechat_access_token(ip_address):
         return None
 
 def get_wechat_user_info(access_token, code, ip_address):
-    """使用code获取企业微信用户信息"""
+    """使用code获取企业微信用户信息 - 按照2022年6月20日起的新规范，通过oauth2手工授权方式获取"""
     try:
+        # 步骤1: 使用code获取用户身份信息
         user_info_url = f"https://qyapi.weixin.qq.com/cgi-bin/user/getuserinfo?access_token={access_token}&code={code}"
-        logger.info(f"调用企业微信API获取用户信息 - IP: {ip_address}")
+        logger.info(f"调用企业微信API获取用户身份信息 - IP: {ip_address}")
         
         response = requests.get(user_info_url, timeout=10)
         user_info_data = response.json()
         
         if user_info_data.get('errcode') != 0:
-            logger.error(f"获取企业微信用户信息失败: {user_info_data}, IP: {ip_address}")
+            logger.error(f"获取企业微信用户身份信息失败: {user_info_data}, IP: {ip_address}")
             return None
+        
+        # 关键修改：检查是否有user_ticket（用于获取详细权限信息）
+        if 'user_ticket' in user_info_data and user_info_data['user_ticket']:
+            logger.info(f"获取到用户授权票据，将使用oauth2方式获取详细信息 - IP: {ip_address}")
+            # 步骤2: 使用user_ticket获取详细的用户授权信息
+            detail_info = get_wechat_user_detail_with_ticket(access_token, user_info_data['user_ticket'], ip_address)
+            if detail_info:
+                # 将详细信息合并到返回结果中
+                user_info_data.update(detail_info)
         
         return user_info_data
     except Exception as e:
         logger.error(f"获取用户信息异常: {e}, IP: {ip_address}")
         return None
 
+def get_wechat_user_detail_with_ticket(access_token, user_ticket, ip_address):
+    """使用user_ticket获取企业微信用户详细授权信息（oauth2手工授权方式）"""
+    try:
+        # 使用oauth2方式获取用户详细信息
+        ticket_url = "https://qyapi.weixin.qq.com/cgi-bin/auth/getuserdetail"
+        payload = {
+            "user_ticket": user_ticket
+        }
+        
+        logger.info(f"调用企业微信oauth2 API获取用户详细授权信息 - IP: {ip_address}")
+        
+        response = requests.post(ticket_url, json=payload, timeout=10, params={"access_token": access_token})
+        detail_data = response.json()
+        
+        if detail_data.get('errcode') != 0:
+            logger.error(f"获取企业微信用户详细授权信息失败: {detail_data}, IP: {ip_address}")
+            return None
+        
+        logger.info(f"成功获取用户详细授权信息，包含字段: {list(detail_data.keys())} - IP: {ip_address}")
+        return detail_data
+    except Exception as e:
+        logger.error(f"获取用户详细授权信息异常: {e}, IP: {ip_address}")
+        return None
+
 def get_wechat_user_detail(access_token, userid, ip_address):
-    """获取企业微信用户详细信息"""
+    """获取企业微信用户详细信息 - 结合oauth2手工授权方式"""
     try:
         user_detail_url = f"https://qyapi.weixin.qq.com/cgi-bin/user/get?access_token={access_token}&userid={userid}"
         response = requests.get(user_detail_url, timeout=10)
@@ -1480,6 +1551,18 @@ def get_wechat_user_detail(access_token, userid, ip_address):
         if user_detail_data.get('errcode') != 0:
             logger.error(f"获取企业微信用户详细信息失败: {user_detail_data}, IP: {ip_address}")
             return None
+        
+        logger.info(f"获取到用户基础信息，包含字段: {list(user_detail_data.keys())} - IP: {ip_address}")
+        
+        # 检查并处理头像URL
+        # 注意：根据企业微信API变更（2022年6月20日起），除通讯录同步以外的基础应用，
+        # 调用该接口时不再返回头像、性别、手机、邮箱等字段
+        avatar = user_detail_data.get('avatar', '')
+        # 如果头像URL为空或只包含空白字符，打印日志并设置为None
+        if not avatar or avatar.strip() == '':
+            print(f"DEBUG: 企业微信返回的用户{userid}头像URL为空字符串")
+            logger.warning(f"企业微信返回的用户{userid}头像URL为空字符串（API变更导致）, IP: {ip_address}")
+            user_detail_data['avatar'] = None
         
         return user_detail_data
     except Exception as e:
@@ -1584,6 +1667,10 @@ def handle_wechat_bind(userid, user_detail, ip_address):
         wechat_name = '企业微信用户'
     
     wechat_avatar = user_detail.get('avatar', '')
+    # 检查头像URL，如果为空则设置为None
+    if not wechat_avatar or wechat_avatar.strip() == '':
+        wechat_avatar = None
+        print(f"DEBUG: 绑定处理时，用户{userid}的头像URL为空，设置为None")
     
     # 2. 绑定过程校验
     try:
@@ -1624,6 +1711,11 @@ def handle_wechat_bind(userid, user_detail, ip_address):
         user_display_name = current_username
         if hasattr(user, 'display_name') and user.display_name:
             user_display_name = user.display_name
+        
+        # 检查头像URL，如果为空则设置为None
+        if not wechat_avatar or wechat_avatar.strip() == '':
+            wechat_avatar = None
+            print(f"DEBUG: 微信绑定用户{userid}的头像URL为空，设置为None")
         
         # 不立即更新数据库，而是返回需要确认的状态
         logger.info(f"企业微信绑定需要用户确认 - 用户名: {current_username}, 微信用户: {wechat_name}, IP: {ip_address}")
@@ -1730,6 +1822,10 @@ def confirm_wechat_login():
     wechat_name = wechat_temp_info.get('name', '企业微信用户')
     username = wechat_temp_info.get('username')
     avatar = wechat_temp_info.get('avatar', '')
+    # 检查头像URL，如果为空则设置为None
+    if not avatar or avatar.strip() == '':
+        avatar = None
+        print(f"DEBUG: 登录时，用户{userid}的头像URL为空，设置为None")
     
     # 创建新用户
     try:
@@ -1759,10 +1855,10 @@ def confirm_wechat_login():
     session['username'] = username
     session['login_type'] = 'wechat_corp'
     session['user_info'] = {
-        'userid': userid,
-        'name': wechat_name,
-        'avatar': avatar
-    }
+            'userid': userid,
+            'name': wechat_name,
+            'avatar': avatar
+        }
     session.permanent = True
     
     return redirect(url_for('auth.user_center'))
@@ -1923,6 +2019,11 @@ def confirm_wechat_bind():
                     existing_user.wechat_corp_name = None
                     existing_user.wechat_corp_avatar = None
                     existing_user.wechat_corp_binded_at = None
+            
+            # 检查头像URL，如果为空则设置为None
+            if not avatar or avatar.strip() == '':
+                avatar = None
+                print(f"DEBUG: 保存到数据库时，用户{userid}的头像URL为空，设置为None")
             
             # 仅更新企业微信相关的必要字段（不修改用户ID等核心信息）
             updated_fields = []
@@ -2202,7 +2303,8 @@ def handle_callback_response(action, result):
                 
                 <!-- 企业微信头像和昵称 -->
                 <div class="flex flex-col items-center mb-6">
-                    <img src="{{ wechat_user_info.avatar if wechat_user_info.avatar else 'data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><circle cx=%2250%22 cy=%2250%22 r=%2240%22 fill=%22%23e8f5e8%22/><text x=%2250%22 y=%2255%22 font-family=%22Arial%22 font-size=%2230%22 text-anchor=%22middle%22 fill=%22%2307C160%22>企业微信</text></svg>' }}" 
+                    {% set avatar_url = wechat_user_info.avatar if wechat_user_info.avatar and wechat_user_info.avatar.strip() else 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><circle cx="50" cy="50" r="40" fill="#e8f5e8"/><text x="50" y="55" font-family="Arial" font-size="30" text-anchor="middle" fill="#07C160">企业微信</text></svg>' %}
+                    <img src="{{ avatar_url }}" 
                          class="w-20 h-20 rounded-full border-4 border-primary/10 object-cover mb-3 avatar-hover" 
                          alt="企业微信头像">
                     <div class="font-semibold text-lg text-gray-900">{{ wechat_user_info.name }}</div>
@@ -2297,11 +2399,90 @@ def handle_callback_response(action, result):
     
     if not result['success']:
         logger.debug(f"[DEBUG] 处理操作失败 - 会话用户: {current_username}, 操作类型: {action}")
-        # 处理其他失败情况
-        session['error_message'] = '操作失败，请稍后重试'
-        # 绑定失败时返回用户中心
+        # 处理绑定失败的情况，显示失败弹窗
         if action == 'bind':
-            return redirect(url_for('auth.user_center'))
+            # 设置错误消息，包含具体的失败原因
+            error_message = result.get('error', '操作失败，请稍后重试')
+            logger.debug(f"[DEBUG] 绑定失败原因: {error_message}")
+            
+            # 渲染绑定失败弹窗页面
+            return render_template_string('''<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>绑定失败 - Hello World</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdn.jsdelivr.net/npm/font-awesome@4.7.0/css/font-awesome.min.css" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#3b82f6',
+                        secondary: '#10b981',
+                        warning: '#f59e0b',
+                        danger: '#ef4444',
+                    },
+                }
+            }
+        }
+    </script>
+    <style type="text/tailwindcss">
+        @layer utilities {
+            .content-auto {
+                content-visibility: auto;
+            }
+            .shadow-pop {
+                box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+            }
+        }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen flex items-center justify-center p-4">
+    <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div class="bg-white rounded-lg shadow-pop max-w-md w-full mx-auto overflow-hidden">
+            <div class="bg-danger p-4">
+                <h2 class="text-white text-xl font-bold text-center flex items-center justify-center gap-2">
+                    <i class="fa fa-exclamation-circle"></i>
+                    <span>绑定失败</span>
+                </h2>
+            </div>
+            <div class="p-6">
+                <div class="text-center mb-6">
+                    <i class="fa fa-wechat text-4xl text-green-500 mb-4"></i>
+                    <h3 class="text-xl font-semibold text-gray-800 mb-2">{{ error_message }}</h3>
+                    <p class="text-gray-600">请检查账号状态后重试</p>
+                </div>
+                
+                <div class="flex space-x-4">
+                    <button id="closeButton" class="flex-1 py-3 px-4 bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors">
+                        关闭
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 关闭按钮点击事件
+        document.getElementById('closeButton').addEventListener('click', function() {
+            // 返回用户中心
+            window.location.href = '{{ url_for("auth.user_center") }}';
+        });
+        
+        // 按ESC键关闭弹窗
+        document.addEventListener('keydown', function(event) {
+            if (event.key === 'Escape') {
+                window.location.href = '{{ url_for("auth.user_center") }}';
+            }
+        });
+    </script>
+</body>
+</html>''', error_message=error_message)
+        
+        # 其他失败情况
+        session['error_message'] = '操作失败，请稍后重试'
         return redirect(url_for('auth.login'))
     
     # 根据操作类型设置成功消息
@@ -2466,9 +2647,7 @@ def user_center():
             </div>
             <div class="flex items-center space-x-4">
                 <span class="text-gray-600">欢迎，{{ display_name }}</span>
-                    {% if user_avatar %}
-                    <img src="{{ user_avatar }}" alt="用户头像" class="w-8 h-8 rounded-full ml-2">
-                    {% endif %}
+                    <img src="{{ user_avatar if user_avatar else 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><circle cx="50" cy="50" r="40" fill="#e8f5e8"/><text x="50" y="55" font-family="Arial" font-size="30" text-anchor="middle" fill="#07C160">用户</text></svg>' }}" alt="用户头像" class="w-8 h-8 rounded-full ml-2">
                 <a href="{{ url_for('auth.logout') }}" class="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-md transition-colors">
                     <i class="fa fa-sign-out mr-1"></i> 退出登录
                 </a>

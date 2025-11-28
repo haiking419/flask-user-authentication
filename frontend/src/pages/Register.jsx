@@ -12,6 +12,8 @@ function Register() {
   const [errorMessage, setErrorMessage] = useState('')
   const [successMessage, setSuccessMessage] = useState('')
   const [countdown, setCountdown] = useState(0)
+  const [showPassword, setShowPassword] = useState(false) // 密码可见性切换
+  const [isLoading, setIsLoading] = useState(false) // 加载状态
   const navigate = useNavigate()
 
   const handleChange = (e) => {
@@ -70,10 +72,12 @@ function Register() {
     e.preventDefault()
     setErrorMessage('')
     setSuccessMessage('')
+    setIsLoading(true) // 显示加载状态
 
     // 表单验证
     if (formData.password !== formData.confirm_password) {
       setErrorMessage('两次输入的密码不一致')
+      setIsLoading(false)
       return
     }
 
@@ -92,13 +96,15 @@ function Register() {
         setSuccessMessage('注册成功，正在跳转到首页...')
         setTimeout(() => {
           navigate('/')
-        }, 2000)
+        }, 1500) // 缩短跳转时间，提升体验
       } else {
         setErrorMessage(data.message || '注册失败，请重试')
       }
     } catch (error) {
       setErrorMessage('网络错误，请稍后重试')
       console.error('注册错误:', error)
+    } finally {
+      setIsLoading(false) // 隐藏加载状态
     }
   }
 
@@ -201,15 +207,26 @@ function Register() {
               <i className="fa fa-key"></i>
             </div>
             <input
-              type="password"
+              type={showPassword ? "text" : "password"}
               id="password"
               name="password"
               value={formData.password}
               onChange={handleChange}
               required
-              className="pl-10 w-full px-3 py-3 border border-gray-300 rounded-lg shadow-sm focus:outline-none input-focus transition duration-200"
+              className="pl-10 pr-10 w-full px-3 py-3 border border-gray-300 rounded-lg shadow-sm focus:outline-none input-focus transition duration-200"
               placeholder="请输入密码"
             />
+            {/* 添加密码可见性切换按钮 */}
+            <div className="absolute inset-y-0 right-0 pr-3 flex items-center">
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                className="text-gray-400 hover:text-gray-600 transition-colors"
+                title={showPassword ? "隐藏密码" : "显示密码"}
+              >
+                <i className={showPassword ? "fa fa-eye-slash" : "fa fa-eye"}></i>
+              </button>
+            </div>
           </div>
         </div>
 
@@ -220,23 +237,43 @@ function Register() {
               <i className="fa fa-check-circle"></i>
             </div>
             <input
-              type="password"
+              type={showPassword ? "text" : "password"}
               id="confirm_password"
               name="confirm_password"
               value={formData.confirm_password}
               onChange={handleChange}
               required
-              className="pl-10 w-full px-3 py-3 border border-gray-300 rounded-lg shadow-sm focus:outline-none input-focus transition duration-200"
+              className="pl-10 pr-10 w-full px-3 py-3 border border-gray-300 rounded-lg shadow-sm focus:outline-none input-focus transition duration-200"
               placeholder="请再次输入密码"
             />
+            {/* 共享密码可见性切换按钮 */}
+            <div className="absolute inset-y-0 right-0 pr-3 flex items-center">
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                className="text-gray-400 hover:text-gray-600 transition-colors"
+                title={showPassword ? "隐藏密码" : "显示密码"}
+              >
+                <i className={showPassword ? "fa fa-eye-slash" : "fa fa-eye"}></i>
+              </button>
+            </div>
           </div>
         </div>
 
         <button
           type="submit"
-          className="btn btn-secondary w-full"
+          disabled={isLoading}
+          className="btn btn-secondary w-full flex items-center justify-center"
         >
-          <i className="fa fa-user-plus mr-2"></i> 注册
+          {isLoading ? (
+            <>
+              <i className="fa fa-spinner fa-spin mr-2"></i> 注册中...
+            </>
+          ) : (
+            <>
+              <i className="fa fa-user-plus mr-2"></i> 注册
+            </>
+          )}
         </button>
       </form>
 
